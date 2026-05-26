@@ -55,6 +55,9 @@ def ensure_directories(config: dict[str, Any], project_root: Path) -> None:
         "data/lake/raw/daily",
         "data/lake/raw/stock_st",
         "data/lake/raw/index_weight",
+        "data/lake/raw/metric",
+        "data/lake/raw/moneyflow",
+        "data/lake/raw/market",
         config["lake"]["core_dir"],
         config["lake"]["state_dir"],
         config["lake"]["audit_dir"],
@@ -268,6 +271,8 @@ def raw_output_path(raw_dir: Path, source: SourceFile, signature: dict[str, Any]
     if source.date_from == "filename":
         trade_date = get_trade_date_from_filename(source.path) or "unknown_date"
         return raw_dir / source.dataset / f"trade_date={trade_date}" / f"{stem}_{digest}.parquet"
+    if source.dataset == "market":
+        return raw_dir / source.dataset / f"ts_code={stem}" / f"{stem}_{digest}.parquet"
     return raw_dir / source.dataset / f"{stem}_{digest}.parquet"
 
 

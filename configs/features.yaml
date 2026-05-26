@@ -1,3 +1,15 @@
 rolling_windows: [5, 10, 20, 60]
 cache_dir: "data/cache/rolling_features"
 future_shift_allowed: false
+feature_availability: "lag1_close_to_next_session"
+baseline_feature_prefix: "lag1_"
+feature_sets:
+  baseline_lightgbm:
+    include_prefixes: ["lag1_"]
+    exclude_raw_same_day: true
+  advanced_sequence:
+    include_prefixes: ["lag1_"]
+    sequence_windows: [20, 60]
+validation:
+  strict_no_future_shift_in_features: true
+  dataset_requires_lagged_features_only: true

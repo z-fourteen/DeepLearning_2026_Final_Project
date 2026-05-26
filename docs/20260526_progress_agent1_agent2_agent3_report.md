@@ -1,4 +1,4 @@
-# 增量式量化数据流水线阶段性进展报告 - Agent 1 / Agent 2 / Agent 3
+# 增量式量化数据流水线阶段性进展报告 - Agent 1 / Agent 2 / Agent 3 / Agent 4
 
 报告日期：2026-05-26
 
@@ -20,9 +20,10 @@
 Agent 1：Ingestion Agent，数据接入层
 Agent 2：Canonical Pool Agent，标准股票池层
 Agent 3：Market State Agent，市场状态层
+Agent 4：Data Mart Agent，研究数据集层
 ```
 
-Agent 4，即面向模型训练的数据集市层，尚未开始。
+Agent 4 已完成 baseline 路径验证。
 
 ## 2. 当前项目目录和工程基础
 
@@ -449,6 +450,9 @@ data/lake/raw/
   daily
   stock_st
   index_weight
+  metric
+  moneyflow
+  market
 ```
 
 ### 6.3 Core Lake
@@ -476,6 +480,20 @@ logs/audit/v20260526_audit.json
 logs/audit/v20260526_state_audit.json
 ```
 
+### 6.6 Data Mart
+
+```text
+data/mart/features_daily/features_daily_v20260526.parquet
+  rows: 25259
+
+data/mart/labels/labels_v20260526.parquet
+  rows: 25259
+
+data/mart/datasets/dataset_v20260526.parquet
+  rows: 24679
+  date range: 20250506 至 20260518
+```
+
 ## 7. 与实验手册的对应关系
 
 当前已完成的工程能力，覆盖了实验手册中的数据基础部分：
@@ -487,14 +505,32 @@ logs/audit/v20260526_state_audit.json
 - 已使用 SCD Type 2 股票池区间，防止幸存者偏差。
 - 已建立全历史日度市场状态层，统一 ST、停牌、价格有效性、成交量有效性和可交易性判断。
 - 已细化创业板涨跌停规则，并为其它板块预留可配置扩展接口。
+- 已将状态层覆盖校验接入 DAG。
+- 已接入 `metric`、`moneyflow`、`market` 三类后续特征所需 raw 数据流。
 - 已保留 `trade_date` 和 `ts_code`，便于后续特征、标签、训练集和回测统一关联。
+
+Agent 4 baseline 已完成：
+
+```text
+features_daily
+labels
+datasets
+```
+
+当前验证窗口：
+
+```text
+start_date: 20250501
+end_date: 20260525
+features_rows: 25259
+dataset_rows: 24679
+future_leakage_check: PASS
+```
 
 尚未完成的实验手册内容：
 
-- `metric`、`moneyflow`、`market` 等更多 raw 数据流接入。
-- 特征工程。
-- 标签构建。
-- 模型训练数据集。
+- 更完整的滚动特征缓存。
+- 模型专用序列数据集。
 - LightGBM / 深度学习模型训练。
 - Top-K 回测和投资评估。
 
@@ -563,15 +599,16 @@ ts_codes: 100
 
 ## 9. 下一阶段建议
 
-Agent 3 的查询接口和规则细化已完成，下一阶段可以进入 Agent 4 的前置数据准备。
+Agent 4 baseline 已跑通，下一阶段建议进入模型训练和回测前的生产化补强。
 
 推荐顺序：
 
-1. 将状态层覆盖校验接入 DAG。
-2. 接入 `metric`、`moneyflow`、`market` 等后续特征所需 raw 数据流。
-3. 开始 Agent 4：Data Mart Agent。
-4. 构建 `features_daily`、`labels` 和训练集。
-5. 后续按需要将 Agent 2 从“变更后确定性重建”升级为“局部 SCD2 区间更新”。
+1. 修正统一审计合并策略，避免后续 Agent 覆盖前序 Agent 指标。
+2. 将 Agent 4 接入完整 DAG。
+3. 扩展 rolling feature cache，支持真正增量滚动特征。
+4. 构建模型专用训练格式，例如 LightGBM 表格数据和深度学习序列数据。
+5. 启动 baseline 训练和 Top-K 回测。
+6. 后续按需要将 Agent 2 从“变更后确定性重建”升级为“局部 SCD2 区间更新”。
 
 当前系统已经具备两个关键防偏差基础：
 
