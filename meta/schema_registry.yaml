@@ -53,24 +53,40 @@ raw:
 state:
   security_daily_state:
     columns:
-      - trade_date
-      - ts_code
-      - is_st
-      - is_suspended
-      - is_limit_up
-      - is_limit_down
-      - is_tradable
-      - listed_days
-      - volume_valid
-      - price_valid
-      - state_version
+      trade_date: date_yyyymmdd
+      ts_code: string
+      is_st: boolean
+      is_suspended: boolean
+      is_limit_up: boolean
+      is_limit_down: boolean
+      is_tradable: boolean
+      listed_days: integer
+      listed_trading_days: integer
+      market_board: string
+      has_price_limit: boolean
+      limit_ratio: numeric
+      limit_up_price: numeric
+      limit_down_price: numeric
+      limit_rule_id: string
+      limit_rule_reason: string
+      volume_valid: boolean
+      price_valid: boolean
+      state_version: string
+      created_at: timestamp
 
 core:
   chinext_pool_scd2:
     columns:
-      - ts_code
-      - index_code
-      - effective_from
-      - effective_to
-      - index_weight
-      - pool_version
+      ts_code: string
+      index_code: string
+      effective_from: date_yyyymmdd
+      effective_to: date_yyyymmdd
+      index_weight: numeric
+      source_trade_date: date_yyyymmdd
+      name: string
+      industry: string
+      market: string
+      list_date: date_yyyymmdd
+      pool_version: string
+      is_active: boolean
+      created_at: timestamp
