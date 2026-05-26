@@ -64,7 +64,21 @@ RAW_FEATURE_COLUMNS = [
     "limit_ratio",
     "dist_to_limit_up",
     "dist_to_limit_down",
+    "limit_position",
+    "near_limit_up_2pct",
+    "near_limit_down_2pct",
+    "limit_touch_up",
+    "limit_touch_down",
     "listed_trading_days",
+    "industry_net_mf_strength_mean",
+    "industry_net_mf_strength_rank",
+    "industry_net_mf_positive_ratio",
+    "amount_rank_pct",
+    "turnover_cost_proxy",
+    "illiquidity_proxy",
+    "max_drawdown_20d",
+    "new_high_20d",
+    "turnover_acceleration",
     "weekday",
     "month",
     "is_month_end",
@@ -259,6 +273,9 @@ def add_features(panel: pd.DataFrame, windows: list[int], benchmark_returns: pd.
         df["buy_lg_amount"] + df["sell_lg_amount"]
     ).replace(0, np.nan)
     df["main_mf_strength"] = (df["buy_lg_amount"] - df["sell_lg_amount"]) / df["amount"].replace(0, np.nan)
+    df["amount_rank_pct"] = df.groupby("trade_date")["amount"].rank(pct=True)
+    df["turnover_cost_proxy"] = df["turnover_rate"] / df["amount_log"].replace(0, np.nan)
+    df["illiquidity_proxy"] = df["ret_1d"].abs() / df["amount"].replace(0, np.nan)
     df["amplitude"] = (df["high"] - df["low"]) / df["pre_close"].replace(0, np.nan)
     df["close_position"] = (df["close"] - df["low"]) / (df["high"] - df["low"]).replace(0, np.nan)
     df["upper_shadow_ratio"] = (df["high"] - df[["open", "close"]].max(axis=1)) / df["pre_close"].replace(0, np.nan)
@@ -309,6 +326,13 @@ def add_features(panel: pd.DataFrame, windows: list[int], benchmark_returns: pd.
         df[f"excess_ret_{window}d_mean"] = grouped["excess_ret_1d"].transform(
             lambda s: s.rolling(window, min_periods=max(2, window // 2)).mean()
         )
+    rolling_high_20 = grouped["close"].transform(lambda s: s.rolling(20, min_periods=10).max())
+    rolling_peak_20 = grouped["close"].transform(lambda s: s.rolling(20, min_periods=10).max())
+    df["max_drawdown_20d"] = df["close"] / rolling_peak_20.replace(0, np.nan) - 1
+    df["new_high_20d"] = df["close"].ge(rolling_high_20).astype(int)
+    df["turnover_acceleration"] = df["turnover_rate"] / grouped["turnover_rate"].transform(
+        lambda s: s.rolling(20, min_periods=10).mean()
+    ).replace(0, np.nan) - 1
     df["_benchmark_ret_x_ret"] = df["benchmark_ret_1d"] * df["ret_1d"]
     df["_benchmark_ret_sq"] = df["benchmark_ret_1d"] * df["benchmark_ret_1d"]
     grouped = df.groupby("ts_code", group_keys=False)
@@ -333,8 +357,19 @@ def add_features(panel: pd.DataFrame, windows: list[int], benchmark_returns: pd.
     df = industry_rank(df, "amount", "industry_amount_rank")
     df = industry_rank(df, "pb_winsor", "industry_pb_rank")
     df = industry_rank(df, "circ_mv", "industry_mv_rank")
+    df["industry_net_mf_strength_mean"] = df.groupby(["trade_date", "industry"])["net_mf_amount_to_amount"].transform("mean")
+    df["industry_net_mf_strength_rank"] = df.groupby(["trade_date", "industry"])["net_mf_amount_to_amount"].rank(pct=True)
+    df["industry_net_mf_positive_ratio"] = df.groupby(["trade_date", "industry"])["net_mf_amount_to_amount"].transform(
+        lambda s: (s > 0).mean()
+    )
     df["dist_to_limit_up"] = df["limit_up_price"] / df["close"].replace(0, np.nan) - 1
     df["dist_to_limit_down"] = df["close"] / df["limit_down_price"].replace(0, np.nan) - 1
+    limit_range = (df["limit_up_price"] - df["limit_down_price"]).replace(0, np.nan)
+    df["limit_position"] = (df["close"] - df["limit_down_price"]) / limit_range
+    df["near_limit_up_2pct"] = df["dist_to_limit_up"].le(0.02).fillna(False).astype(int)
+    df["near_limit_down_2pct"] = df["dist_to_limit_down"].le(0.02).fillna(False).astype(int)
+    df["limit_touch_up"] = df["high"].ge(df["limit_up_price"]).fillna(False).astype(int)
+    df["limit_touch_down"] = df["low"].le(df["limit_down_price"]).fillna(False).astype(int)
     return df
 
 

@@ -79,9 +79,12 @@ feature_sets:
       - lag1_industry_ret_1d_mean
       - lag1_intraday_return
       - lag1_excess_ret_1d
-      - lag1_dist_to_limit_down
       - lag1_ret_1d
-      - lag1_dist_to_limit_up
+      - lag1_limit_position
+      - lag1_near_limit_up_2pct
+      - lag1_near_limit_down_2pct
+      - lag1_limit_touch_up
+      - lag1_limit_touch_down
       - lag1_ps_ttm_winsor
       - lag1_industry_mv_rank
       - lag1_pe_ttm_winsor
@@ -99,4 +102,22 @@ validation:
   dataset_requires_lagged_features_only: true
   max_baseline_corr: 0.85
   regime_ic_enabled: true
+  regime_definition: "historical_benchmark_ret20_vol20_amount60"
+  supported_reports:
+    - factor_ic_rankic
+    - factor_quantile_long_short
+    - factor_quantile_detail
+    - factor_yearly_quantile_long_short
+    - factor_regime_quantile_long_short
+    - factor_regime_ic
+    - feature_quality
+    - feature_correlation_top
+    - feature_recommendations
   recommendation_source: "outputs/factor_validation/v20260526/feature_recommendations.csv"
+  collinearity_pruning_groups:
+    - [lag1_ret_5d, lag1_ret_5d_mean]
+    - [lag1_ret_20d, lag1_ret_20d_mean]
+    - [lag1_large_order_imbalance, lag1_main_mf_strength]
+    - [lag1_price_to_ma20, lag1_bollinger_z_20d]
+    - [lag1_macd_diff, lag1_macd_dea, lag1_macd_hist]
+    - [lag1_dist_to_limit_up, lag1_dist_to_limit_down, lag1_ret_1d]

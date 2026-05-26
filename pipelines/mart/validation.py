@@ -37,6 +37,63 @@ def read_dataset(project_root: Path, config: dict[str, Any], data_version: str) 
     return df.sort_values(["trade_date", "ts_code"]).reset_index(drop=True)
 
 
+def read_registry(project_root: Path, config: dict[str, Any]) -> pd.DataFrame:
+    path = project_root / config["meta"]["file_registry"]
+    if not path.exists():
+        raise FileNotFoundError(f"Missing file registry: {path}")
+    return pd.read_parquet(path)
+
+
+def normalize_dates(df: pd.DataFrame) -> pd.DataFrame:
+    if "trade_date" in df.columns:
+        df = df.copy()
+        df["trade_date"] = df["trade_date"].astype("string").str.replace(r"\.0$", "", regex=True)
+    return df
+
+
+def read_raw_dataset(project_root: Path, config: dict[str, Any], dataset: str) -> pd.DataFrame:
+    registry = read_registry(project_root, config)
+    rows = registry[(registry["dataset"] == dataset) & (registry["status"] == "ingested")]
+    if rows.empty:
+        raise ValueError(f"No raw dataset found: {dataset}")
+    frames: list[pd.DataFrame] = []
+    for raw_path in rows["raw_path"].dropna().sort_values():
+        path = Path(raw_path)
+        if not path.is_absolute():
+            path = project_root / path
+        df = pd.read_parquet(path)
+        if not df.empty:
+            frames.append(df)
+    if not frames:
+        return pd.DataFrame()
+    return pd.concat(frames, ignore_index=True)
+
+
+def read_benchmark_regime_source(project_root: Path, config: dict[str, Any], benchmark: str) -> pd.DataFrame:
+    market = normalize_dates(read_raw_dataset(project_root, config, "market"))
+    market["ts_code"] = market["ts_code"].astype("string")
+    market = market[market["ts_code"] == benchmark].copy()
+    if market.empty:
+        raise ValueError(f"Benchmark not found in market raw dataset: {benchmark}")
+    for column in ["close", "pre_close", "amount"]:
+        market[column] = pd.to_numeric(market[column], errors="coerce")
+    market = market.sort_values("trade_date")
+    market["benchmark_ret_1d"] = market["close"] / market["pre_close"] - 1
+    market["benchmark_ret_20d"] = market["close"] / market["close"].shift(20) - 1
+    market["benchmark_ret_60d"] = market["close"] / market["close"].shift(60) - 1
+    market["benchmark_vol_20d"] = market["benchmark_ret_1d"].rolling(20, min_periods=10).std()
+    market["benchmark_amount_rank_60d"] = market["amount"].rolling(60, min_periods=20).rank(pct=True)
+    return market[
+        [
+            "trade_date",
+            "benchmark_ret_20d",
+            "benchmark_ret_60d",
+            "benchmark_vol_20d",
+            "benchmark_amount_rank_60d",
+        ]
+    ]
+
+
 def feature_columns(df: pd.DataFrame) -> list[str]:
     return [column for column in df.columns if column.startswith("lag1_")]
 
@@ -187,6 +244,82 @@ def compute_quantile_table(
     )
 
 
+def compute_quantile_detail_table(
+    df: pd.DataFrame,
+    features: list[str],
+    label_column: str,
+    quantiles: int,
+    min_cross_section: int,
+) -> pd.DataFrame:
+    records: list[dict[str, Any]] = []
+    for feature in features:
+        working = df[["trade_date", feature, label_column]].copy()
+        working[feature] = pd.to_numeric(working[feature], errors="coerce")
+        working[label_column] = pd.to_numeric(working[label_column], errors="coerce")
+        working = working.replace([np.inf, -np.inf], np.nan).dropna()
+        if working.empty:
+            continue
+        working["quantile"] = working.groupby("trade_date", group_keys=False)[feature].transform(
+            lambda s: _assign_quantile(s, quantiles)
+        )
+        working = working.dropna(subset=["quantile"])
+        day_sizes = working.groupby("trade_date").size()
+        valid_dates = day_sizes[day_sizes >= min_cross_section].index
+        working = working[working["trade_date"].isin(valid_dates)]
+        if working.empty:
+            continue
+        working["feature"] = feature
+        detail = working.groupby(["feature", "quantile"], as_index=False)[label_column].mean()
+        detail["feature"] = feature
+        detail = detail.rename(columns={label_column: "mean_return"})
+        pivot = detail.sort_values("quantile")
+        returns = pivot["mean_return"].to_numpy()
+        monotonic_up = bool(np.all(np.diff(returns) >= 0)) if len(returns) == quantiles else False
+        monotonic_down = bool(np.all(np.diff(returns) <= 0)) if len(returns) == quantiles else False
+        detail["is_monotonic"] = monotonic_up or monotonic_down
+        detail["monotonic_direction"] = "up" if monotonic_up else "down" if monotonic_down else "none"
+        records.extend(detail.to_dict(orient="records"))
+    return pd.DataFrame(records)
+
+
+def compute_regime_quantile_table(
+    df: pd.DataFrame,
+    features: list[str],
+    label_column: str,
+    benchmark_regime: pd.DataFrame,
+    quantiles: int,
+    min_cross_section: int,
+) -> pd.DataFrame:
+    with_regime = assign_market_regimes(df, benchmark_regime)
+    records: list[pd.DataFrame] = []
+    for regime, regime_df in with_regime.groupby("market_regime", sort=True):
+        table = compute_quantile_table(regime_df.drop(columns=["market_regime"]), features, label_column, quantiles, min_cross_section)
+        table.insert(0, "market_regime", regime)
+        records.append(table)
+    if not records:
+        return pd.DataFrame()
+    return pd.concat(records, ignore_index=True)
+
+
+def compute_yearly_quantile_table(
+    df: pd.DataFrame,
+    features: list[str],
+    label_column: str,
+    quantiles: int,
+    min_cross_section: int,
+) -> pd.DataFrame:
+    working = df.copy()
+    working["year"] = working["trade_date"].astype(str).str.slice(0, 4)
+    records: list[pd.DataFrame] = []
+    for year, year_df in working.groupby("year", sort=True):
+        table = compute_quantile_table(year_df.drop(columns=["year"]), features, label_column, quantiles, min_cross_section)
+        table.insert(0, "year", year)
+        records.append(table)
+    if not records:
+        return pd.DataFrame()
+    return pd.concat(records, ignore_index=True)
+
+
 def compute_quality_table(df: pd.DataFrame, features: list[str]) -> pd.DataFrame:
     records: list[dict[str, Any]] = []
     for feature in features:
@@ -226,13 +359,18 @@ def compute_correlation_table(df: pd.DataFrame, features: list[str], top_n: int 
     return table.reindex(table["spearman_corr"].abs().sort_values(ascending=False).index).head(top_n)
 
 
-def assign_market_regimes(df: pd.DataFrame, label_column: str) -> pd.DataFrame:
-    daily = df.groupby("trade_date", as_index=False)[label_column].mean().rename(columns={label_column: "market_proxy_return"})
-    lower = daily["market_proxy_return"].quantile(1 / 3)
-    upper = daily["market_proxy_return"].quantile(2 / 3)
+def assign_market_regimes(df: pd.DataFrame, benchmark_regime: pd.DataFrame) -> pd.DataFrame:
+    daily = benchmark_regime.copy()
+    ret_lower = daily["benchmark_ret_20d"].quantile(1 / 3)
+    ret_upper = daily["benchmark_ret_20d"].quantile(2 / 3)
+    vol_upper = daily["benchmark_vol_20d"].quantile(2 / 3)
     daily["market_regime"] = np.select(
-        [daily["market_proxy_return"] <= lower, daily["market_proxy_return"] >= upper],
-        ["bear", "bull"],
+        [
+            daily["benchmark_vol_20d"] >= vol_upper,
+            daily["benchmark_ret_20d"] >= ret_upper,
+            daily["benchmark_ret_20d"] <= ret_lower,
+        ],
+        ["high_vol", "bull", "bear"],
         default="sideways",
     )
     return df.merge(daily[["trade_date", "market_regime"]], on="trade_date", how="left")
@@ -241,10 +379,10 @@ def assign_market_regimes(df: pd.DataFrame, label_column: str) -> pd.DataFrame:
 def compute_regime_ic_table(
     daily_ic: pd.DataFrame,
     df: pd.DataFrame,
+    benchmark_regime: pd.DataFrame,
     features: list[str],
-    label_column: str,
 ) -> pd.DataFrame:
-    with_regime = assign_market_regimes(df[["trade_date", label_column]], label_column)[["trade_date", "market_regime"]]
+    with_regime = assign_market_regimes(df[["trade_date"]].drop_duplicates(), benchmark_regime)[["trade_date", "market_regime"]]
     daily_with_regime = daily_ic.merge(with_regime.drop_duplicates("trade_date"), on="trade_date", how="left")
     records: list[pd.DataFrame] = []
     for regime, regime_daily in daily_with_regime.groupby("market_regime", sort=True):
@@ -302,6 +440,23 @@ def build_feature_recommendations(
     )
     table = table.sort_values("score", ascending=False).reset_index(drop=True)
 
+    pruning_groups = [
+        {"lag1_ret_5d", "lag1_ret_5d_mean"},
+        {"lag1_ret_20d", "lag1_ret_20d_mean"},
+        {"lag1_large_order_imbalance", "lag1_main_mf_strength"},
+        {"lag1_price_to_ma20", "lag1_bollinger_z_20d"},
+        {"lag1_macd_diff", "lag1_macd_dea", "lag1_macd_hist"},
+        {"lag1_dist_to_limit_up", "lag1_dist_to_limit_down", "lag1_ret_1d"},
+    ]
+    group_winners: dict[str, str] = {}
+    for group in pruning_groups:
+        candidates = table[table["feature"].isin(group)]
+        if candidates.empty:
+            continue
+        winner = candidates.sort_values("score", ascending=False).iloc[0]["feature"]
+        for feature in group:
+            group_winners[feature] = winner
+
     selected: list[str] = []
     correlated_to_selected: dict[str, str] = {}
     corr_lookup: dict[tuple[str, str], float] = {}
@@ -328,6 +483,11 @@ def build_feature_recommendations(
         if any(keyword in feature for keyword in baseline_excluded_keywords):
             recommendations.append("advanced")
             reasons.append("reserved_for_advanced_or_sequence_model")
+            continue
+        group_winner = group_winners.get(feature)
+        if group_winner is not None and group_winner != feature:
+            recommendations.append("advanced")
+            reasons.append(f"pruned_by_collinearity_group:{group_winner}")
             continue
         if pd.isna(rank_ic) and pd.isna(ls_return):
             recommendations.append("drop")
@@ -364,6 +524,9 @@ def write_outputs(
     output_dir: Path,
     ic_table: pd.DataFrame,
     quantile_table: pd.DataFrame,
+    quantile_detail_table: pd.DataFrame,
+    yearly_quantile_table: pd.DataFrame,
+    regime_quantile_table: pd.DataFrame,
     quality_table: pd.DataFrame,
     correlation_table: pd.DataFrame,
     regime_ic_table: pd.DataFrame,
@@ -374,6 +537,9 @@ def write_outputs(
     paths = {
         "ic": output_dir / "factor_ic_rankic.csv",
         "quantile": output_dir / "factor_quantile_long_short.csv",
+        "quantile_detail": output_dir / "factor_quantile_detail.csv",
+        "yearly_quantile": output_dir / "factor_yearly_quantile_long_short.csv",
+        "regime_quantile": output_dir / "factor_regime_quantile_long_short.csv",
         "quality": output_dir / "feature_quality.csv",
         "correlation": output_dir / "feature_correlation_top.csv",
         "regime_ic": output_dir / "factor_regime_ic.csv",
@@ -382,6 +548,9 @@ def write_outputs(
     }
     ic_table.to_csv(paths["ic"], index=False, encoding="utf-8-sig")
     quantile_table.to_csv(paths["quantile"], index=False, encoding="utf-8-sig")
+    quantile_detail_table.to_csv(paths["quantile_detail"], index=False, encoding="utf-8-sig")
+    yearly_quantile_table.to_csv(paths["yearly_quantile"], index=False, encoding="utf-8-sig")
+    regime_quantile_table.to_csv(paths["regime_quantile"], index=False, encoding="utf-8-sig")
     quality_table.to_csv(paths["quality"], index=False, encoding="utf-8-sig")
     correlation_table.to_csv(paths["correlation"], index=False, encoding="utf-8-sig")
     regime_ic_table.to_csv(paths["regime_ic"], index=False, encoding="utf-8-sig")
@@ -398,8 +567,12 @@ def run_factor_validation(
     quantiles: int,
     min_cross_section: int,
     max_baseline_corr: float,
+    feature_set: str | None = None,
 ) -> dict[str, Any]:
     config = load_yaml(config_path)
+    labels_config_path = project_root / "configs" / "labels.yaml"
+    labels_config = load_yaml(labels_config_path) if labels_config_path.exists() else {}
+    benchmark = labels_config.get("benchmark", "399006.SZ")
     validation_config = ValidationConfig(
         data_version=data_version,
         label_column=label_column,
@@ -411,6 +584,10 @@ def run_factor_validation(
     if validation_config.label_column not in df.columns:
         raise ValueError(f"Label column not found: {validation_config.label_column}")
     features = feature_columns(df)
+    if feature_set:
+        configured = load_yaml(project_root / "configs" / "features.yaml")
+        selected = configured.get("feature_sets", {}).get(feature_set, {}).get("selected_features", [])
+        features = [feature for feature in selected if feature in features]
     if not features:
         raise ValueError("No lag1_ feature columns found in mart dataset.")
 
@@ -423,9 +600,32 @@ def run_factor_validation(
         validation_config.quantiles,
         validation_config.min_cross_section,
     )
+    quantile_detail_table = compute_quantile_detail_table(
+        df,
+        features,
+        validation_config.label_column,
+        validation_config.quantiles,
+        validation_config.min_cross_section,
+    )
     quality_table = compute_quality_table(df, features)
     correlation_table = compute_correlation_table(df, features)
-    regime_ic_table = compute_regime_ic_table(daily_ic_table, df, features, validation_config.label_column)
+    benchmark_regime = read_benchmark_regime_source(project_root, config, benchmark)
+    regime_ic_table = compute_regime_ic_table(daily_ic_table, df, benchmark_regime, features)
+    yearly_quantile_table = compute_yearly_quantile_table(
+        df,
+        features,
+        validation_config.label_column,
+        validation_config.quantiles,
+        validation_config.min_cross_section,
+    )
+    regime_quantile_table = compute_regime_quantile_table(
+        df,
+        features,
+        validation_config.label_column,
+        benchmark_regime,
+        validation_config.quantiles,
+        validation_config.min_cross_section,
+    )
     recommendation_table = build_feature_recommendations(
         features,
         ic_table,
@@ -442,9 +642,11 @@ def run_factor_validation(
         "trade_dates": int(df["trade_date"].nunique()),
         "stocks": int(df["ts_code"].nunique()),
         "features": int(len(features)),
+        "feature_set": feature_set or "all_lag1",
         "quantiles": validation_config.quantiles,
         "min_cross_section": validation_config.min_cross_section,
         "max_baseline_corr": validation_config.max_baseline_corr,
+        "regime_definition": "historical_benchmark_ret20_vol20_amount60",
         "baseline_features": recommendation_table[recommendation_table["recommendation"].eq("baseline")]["feature"].tolist(),
         "advanced_features": recommendation_table[recommendation_table["recommendation"].eq("advanced")]["feature"].tolist(),
         "dropped_features": recommendation_table[recommendation_table["recommendation"].eq("drop")]["feature"].tolist(),
@@ -456,6 +658,9 @@ def run_factor_validation(
         output_dir,
         ic_table,
         quantile_table,
+        quantile_detail_table,
+        yearly_quantile_table,
+        regime_quantile_table,
         quality_table,
         correlation_table,
         regime_ic_table,
@@ -474,6 +679,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--quantiles", type=int, default=5)
     parser.add_argument("--min-cross-section", type=int, default=30)
     parser.add_argument("--max-baseline-corr", type=float, default=0.85)
+    parser.add_argument("--feature-set", choices=["baseline_lightgbm", "advanced_sequence"])
     return parser.parse_args()
 
 
@@ -488,6 +694,7 @@ def main() -> None:
         quantiles=args.quantiles,
         min_cross_section=args.min_cross_section,
         max_baseline_corr=args.max_baseline_corr,
+        feature_set=args.feature_set,
     )
     print(json.dumps(result, ensure_ascii=False, indent=2))
 
