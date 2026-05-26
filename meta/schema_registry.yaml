@@ -1,0 +1,76 @@
+raw:
+  basic:
+    required_columns: [ts_code, symbol, name, market, list_date]
+    columns:
+      ts_code: string
+      symbol: string
+      name: string
+      area: string
+      industry: string
+      cnspell: string
+      market: string
+      list_date: date_yyyymmdd
+      act_name: string
+      act_ent_type: string
+  trade_cal:
+    required_columns: [exchange, cal_date, is_open, pretrade_date]
+    columns:
+      exchange: string
+      cal_date: date_yyyymmdd
+      is_open: integer
+      pretrade_date: date_yyyymmdd
+  daily:
+    required_columns: [ts_code, trade_date, open, high, low, close, pre_close, vol, amount]
+    columns:
+      ts_code: string
+      trade_date: date_yyyymmdd
+      open: numeric
+      high: numeric
+      low: numeric
+      close: numeric
+      pre_close: numeric
+      change: numeric
+      pct_chg: numeric
+      vol: numeric
+      amount: numeric
+      vwap: numeric
+  stock_st:
+    required_columns: [ts_code, trade_date, type]
+    columns:
+      ts_code: string
+      name: string
+      trade_date: date_yyyymmdd
+      type: string
+      type_name: string
+  index_weight:
+    required_columns: [index_code, con_code, trade_date, weight]
+    columns:
+      index_code: string
+      con_code: string
+      trade_date: date_yyyymmdd
+      weight: numeric
+
+state:
+  security_daily_state:
+    columns:
+      - trade_date
+      - ts_code
+      - is_st
+      - is_suspended
+      - is_limit_up
+      - is_limit_down
+      - is_tradable
+      - listed_days
+      - volume_valid
+      - price_valid
+      - state_version
+
+core:
+  chinext_pool_scd2:
+    columns:
+      - ts_code
+      - index_code
+      - effective_from
+      - effective_to
+      - index_weight
+      - pool_version

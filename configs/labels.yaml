@@ -1,0 +1,3 @@
+default_horizon: 5
+label_mode: relative_return
+benchmark: "399006.SZ"
