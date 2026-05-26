@@ -4,7 +4,6 @@ import argparse
 import hashlib
 import json
 import re
-import shutil
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -167,6 +166,90 @@ def read_csv(source: SourceFile, encoding: str) -> pd.DataFrame:
     return df
 
 
+def validate_schema(df: pd.DataFrame, source: SourceFile, config: dict[str, Any]) -> None:
+    validation_config = config["ingestion"].get("schema_validation", {})
+    if not validation_config.get("enabled", True):
+        return
+
+    schemas = validation_config.get("schemas", {})
+    schema = schemas.get(source.dataset)
+    if not schema:
+        raise ValueError(f"No schema configured for dataset={source.dataset}")
+
+    expected = schema.get("columns", {})
+    expected_columns = set(expected)
+    actual_columns = set(df.columns)
+    missing = sorted(expected_columns - actual_columns)
+    if missing:
+        raise ValueError(f"Schema validation failed for {source.path}: missing columns={missing}")
+
+    if validation_config.get("strict_columns", False):
+        extra = sorted(actual_columns - expected_columns)
+        if extra:
+            raise ValueError(f"Schema validation failed for {source.path}: unexpected columns={extra}")
+
+    for column, expected_type in expected.items():
+        series = df[column].dropna()
+        if series.empty:
+            continue
+
+        if expected_type == "string":
+            continue
+        if expected_type == "numeric":
+            coerced = pd.to_numeric(series, errors="coerce")
+            if coerced.isna().any():
+                bad_values = series[coerced.isna()].astype(str).head(5).tolist()
+                raise ValueError(
+                    f"Schema validation failed for {source.path}: column={column} "
+                    f"contains non-numeric values={bad_values}"
+                )
+            continue
+        if expected_type == "integer":
+            coerced = pd.to_numeric(series, errors="coerce")
+            invalid = coerced.isna() | (coerced % 1 != 0)
+            if invalid.any():
+                bad_values = series[invalid].astype(str).head(5).tolist()
+                raise ValueError(
+                    f"Schema validation failed for {source.path}: column={column} "
+                    f"contains non-integer values={bad_values}"
+                )
+            continue
+        if expected_type == "date_yyyymmdd":
+            values = series.astype(str).str.replace(r"\.0$", "", regex=True)
+            invalid = ~values.str.fullmatch(r"\d{8}")
+            if invalid.any():
+                bad_values = values[invalid].head(5).tolist()
+                raise ValueError(
+                    f"Schema validation failed for {source.path}: column={column} "
+                    f"contains invalid YYYYMMDD values={bad_values}"
+                )
+            continue
+
+        raise ValueError(f"Unsupported schema type={expected_type} for dataset={source.dataset}, column={column}")
+
+
+def enforce_schema_types(df: pd.DataFrame, source: SourceFile, config: dict[str, Any]) -> pd.DataFrame:
+    validation_config = config["ingestion"].get("schema_validation", {})
+    schema = validation_config.get("schemas", {}).get(source.dataset, {})
+    expected = schema.get("columns", {})
+    typed = df.copy()
+
+    for column, expected_type in expected.items():
+        if column not in typed.columns:
+            continue
+        if expected_type == "string":
+            typed[column] = typed[column].astype("string")
+        elif expected_type == "numeric":
+            typed[column] = pd.to_numeric(typed[column], errors="coerce")
+        elif expected_type == "integer":
+            typed[column] = pd.to_numeric(typed[column], errors="coerce").astype("Int64")
+        elif expected_type == "date_yyyymmdd":
+            values = typed[column].astype("string").str.replace(r"\.0$", "", regex=True)
+            typed[column] = values.mask(values.isin(["<NA>", "nan", "NaN", "None"]), pd.NA)
+
+    return typed
+
+
 def date_bounds(df: pd.DataFrame, source: SourceFile) -> tuple[str | None, str | None]:
     date_column = source.date_column or "trade_date"
     if source.date_from == "filename":
@@ -210,6 +293,8 @@ def ingest_one(
     encoding = config["source"].get("csv_encoding", "utf-8")
     raw_dir = project_root / config["lake"]["raw_dir"]
     df = read_csv(source, encoding)
+    validate_schema(df, source, config)
+    df = enforce_schema_types(df, source, config)
     trade_date_min, trade_date_max = date_bounds(df, source)
     output_path = raw_output_path(raw_dir, source, signature)
 
@@ -255,7 +340,6 @@ def append_data_version(project_root: Path, config: dict[str, Any], data_version
 def write_audit(project_root: Path, config: dict[str, Any], data_version: str, summary: dict[str, Any]) -> None:
     audit_dir = project_root / config["logs"]["audit_dir"]
     audit_dir.mkdir(parents=True, exist_ok=True)
-    audit_date = data_version.removeprefix("v")
     payload = {
         "data_version": data_version,
         "new_trade_dates": summary["new_trade_dates"],
@@ -271,7 +355,7 @@ def write_audit(project_root: Path, config: dict[str, Any], data_version: str, s
         "ingested_rows": summary["ingested_rows"],
         "created_at": utc_now_iso(),
     }
-    with (audit_dir / f"{audit_date}_audit.json").open("w", encoding="utf-8") as f:
+    with (audit_dir / f"{data_version}_audit.json").open("w", encoding="utf-8") as f:
         json.dump(payload, f, ensure_ascii=False, indent=2)
 
 
@@ -286,7 +370,12 @@ def latest_data_version(records: list[dict[str, Any]]) -> str:
     return "v" + datetime.now().strftime("%Y%m%d")
 
 
-def run_ingestion(config_path: Path, project_root: Path, dry_run: bool = False) -> dict[str, Any]:
+def run_ingestion(
+    config_path: Path,
+    project_root: Path,
+    dry_run: bool = False,
+    data_version: str | None = None,
+) -> dict[str, Any]:
     config = load_yaml(config_path)
     ensure_directories(config, project_root)
 
@@ -316,7 +405,7 @@ def run_ingestion(config_path: Path, project_root: Path, dry_run: bool = False) 
         "new_trade_dates": len(changed_trade_dates),
         "ingested_rows": int(sum(record.get("row_count") or 0 for record in records)),
     }
-    data_version = latest_data_version(records)
+    data_version = data_version or latest_data_version(records)
 
     if not dry_run:
         append_data_version(project_root, config, data_version, summary)
@@ -330,13 +419,19 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--config", default="configs/data.yaml", help="Path to the data config YAML.")
     parser.add_argument("--project-root", default=".", help="Project root directory.")
     parser.add_argument("--dry-run", action="store_true", help="Detect changes without writing raw data or metadata.")
+    parser.add_argument("--data-version", help="Explicit global data version, for example v20260526.")
     return parser.parse_args()
 
 
 def main() -> None:
     args = parse_args()
     project_root = Path(args.project_root).resolve()
-    result = run_ingestion(project_root / args.config, project_root, dry_run=args.dry_run)
+    result = run_ingestion(
+        project_root / args.config,
+        project_root,
+        dry_run=args.dry_run,
+        data_version=args.data_version,
+    )
     print(json.dumps(result, ensure_ascii=False, indent=2))
 
 
