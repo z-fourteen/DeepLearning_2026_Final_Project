@@ -175,6 +175,61 @@ ingestion:
           con_code: string
           trade_date: date_yyyymmdd
           weight: numeric
+      metric:
+        columns:
+          ts_code: string
+          trade_date: date_yyyymmdd
+          close: numeric
+          turnover_rate: numeric
+          turnover_rate_f: numeric
+          volume_ratio: numeric
+          pe: numeric
+          pe_ttm: numeric
+          pb: numeric
+          ps: numeric
+          ps_ttm: numeric
+          dv_ratio: numeric
+          dv_ttm: numeric
+          total_share: numeric
+          float_share: numeric
+          free_share: numeric
+          total_mv: numeric
+          circ_mv: numeric
+      moneyflow:
+        columns:
+          ts_code: string
+          trade_date: date_yyyymmdd
+          buy_sm_vol: numeric
+          buy_sm_amount: numeric
+          sell_sm_vol: numeric
+          sell_sm_amount: numeric
+          buy_md_vol: numeric
+          buy_md_amount: numeric
+          sell_md_vol: numeric
+          sell_md_amount: numeric
+          buy_lg_vol: numeric
+          buy_lg_amount: numeric
+          sell_lg_vol: numeric
+          sell_lg_amount: numeric
+          buy_elg_vol: numeric
+          buy_elg_amount: numeric
+          sell_elg_vol: numeric
+          sell_elg_amount: numeric
+          net_mf_vol: numeric
+          net_mf_amount: numeric
+      market:
+        columns:
+          ts_code: string
+          trade_date: date_yyyymmdd
+          close: numeric
+          open: numeric
+          high: numeric
+          low: numeric
+          pre_close: numeric
+          change: numeric
+          pct_chg: numeric
+          vol: numeric
+          amount: numeric
   datasets:
     basic:
       path: "basic.csv"
@@ -196,5 +251,18 @@ ingestion:
     index_weight:
       path: "index_weight"
       layout: monthly_index_files
+      date_from: column
+      date_column: trade_date
+    metric:
+      path: "metric"
+      layout: dated_files
+      date_from: filename
+    moneyflow:
+      path: "moneyflow"
+      layout: dated_files
+      date_from: filename
+    market:
+      path: "market"
+      layout: symbol_files
       date_from: column
       date_column: trade_date
