@@ -110,6 +110,8 @@ validation:
     - factor_yearly_quantile_long_short
     - factor_regime_quantile_long_short
     - factor_regime_ic
+    - factor_neutralized_ic
+    - factor_holdout_quantile_long_short
     - feature_quality
     - feature_correlation_top
     - feature_recommendations
@@ -121,3 +123,12 @@ validation:
     - [lag1_price_to_ma20, lag1_bollinger_z_20d]
     - [lag1_macd_diff, lag1_macd_dea, lag1_macd_hist]
     - [lag1_dist_to_limit_up, lag1_dist_to_limit_down, lag1_ret_1d]
+  train_only_recommendation:
+    enabled: true
+    train_end_date: "20251231"
+    eval_start_date: "20260101"
+  neutralization:
+    enabled: true
+    exposures:
+      - lag1_log_circ_mv
+      - lag1_turnover_rate_f

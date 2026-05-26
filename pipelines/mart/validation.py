@@ -20,6 +20,8 @@ class ValidationConfig:
     quantiles: int
     min_cross_section: int
     max_baseline_corr: float
+    train_end_date: str | None = None
+    eval_start_date: str | None = None
 
 
 def utc_now_iso() -> str:
@@ -96,6 +98,48 @@ def read_benchmark_regime_source(project_root: Path, config: dict[str, Any], ben
 
 def feature_columns(df: pd.DataFrame) -> list[str]:
     return [column for column in df.columns if column.startswith("lag1_")]
+
+
+def add_neutralization_exposures(df: pd.DataFrame) -> pd.DataFrame:
+    result = df.copy()
+    result["exposure_size"] = pd.to_numeric(result.get("lag1_log_circ_mv"), errors="coerce")
+    turnover_candidates = ["lag1_turnover_rate_f", "lag1_turnover_rate", "lag1_turnover_5d_mean", "lag1_turnover_60d_mean"]
+    turnover = next((column for column in turnover_candidates if column in result.columns), None)
+    result["exposure_liquidity"] = pd.to_numeric(result[turnover], errors="coerce") if turnover else np.nan
+    return result
+
+
+def neutralize_feature(group: pd.DataFrame, feature: str, exposure_columns: list[str]) -> pd.Series:
+    columns = [feature, *exposure_columns]
+    data = group[columns].apply(pd.to_numeric, errors="coerce").replace([np.inf, -np.inf], np.nan)
+    valid = data.dropna()
+    residual = pd.Series(np.nan, index=group.index, dtype="float64")
+    if valid.shape[0] <= len(exposure_columns) + 2 or valid[feature].nunique() < 2:
+        return residual
+    y = valid[feature].to_numpy(dtype="float64")
+    x = valid[exposure_columns].to_numpy(dtype="float64")
+    x = np.column_stack([np.ones(len(x)), x])
+    try:
+        beta = np.linalg.lstsq(x, y, rcond=None)[0]
+    except np.linalg.LinAlgError:
+        return residual
+    residual.loc[valid.index] = y - x @ beta
+    return residual
+
+
+def build_neutralized_dataset(df: pd.DataFrame, features: list[str], label_column: str) -> pd.DataFrame:
+    result = add_neutralization_exposures(df[["trade_date", "ts_code", label_column, *features]].copy())
+    residual_features: list[str] = []
+    for feature in features:
+        if feature in {"lag1_log_circ_mv", "lag1_turnover_rate", "lag1_turnover_rate_f"}:
+            continue
+        residual_feature = f"{feature}__neutral"
+        neutralize_columns = [feature, "exposure_size", "exposure_liquidity"]
+        result[residual_feature] = result.groupby("trade_date", group_keys=False)[neutralize_columns].apply(
+            lambda g: neutralize_feature(g, feature, ["exposure_size", "exposure_liquidity"])
+        )
+        residual_features.append(residual_feature)
+    return result[["trade_date", "ts_code", label_column, *residual_features]]
 
 
 def _pearson_ic(group: pd.DataFrame, feature: str, label_column: str, method: str) -> float:
@@ -527,6 +571,8 @@ def write_outputs(
     quantile_detail_table: pd.DataFrame,
     yearly_quantile_table: pd.DataFrame,
     regime_quantile_table: pd.DataFrame,
+    neutralized_ic_table: pd.DataFrame,
+    holdout_quantile_table: pd.DataFrame,
     quality_table: pd.DataFrame,
     correlation_table: pd.DataFrame,
     regime_ic_table: pd.DataFrame,
@@ -540,6 +586,8 @@ def write_outputs(
         "quantile_detail": output_dir / "factor_quantile_detail.csv",
         "yearly_quantile": output_dir / "factor_yearly_quantile_long_short.csv",
         "regime_quantile": output_dir / "factor_regime_quantile_long_short.csv",
+        "neutralized_ic": output_dir / "factor_neutralized_ic.csv",
+        "holdout_quantile": output_dir / "factor_holdout_quantile_long_short.csv",
         "quality": output_dir / "feature_quality.csv",
         "correlation": output_dir / "feature_correlation_top.csv",
         "regime_ic": output_dir / "factor_regime_ic.csv",
@@ -551,6 +599,8 @@ def write_outputs(
     quantile_detail_table.to_csv(paths["quantile_detail"], index=False, encoding="utf-8-sig")
     yearly_quantile_table.to_csv(paths["yearly_quantile"], index=False, encoding="utf-8-sig")
     regime_quantile_table.to_csv(paths["regime_quantile"], index=False, encoding="utf-8-sig")
+    neutralized_ic_table.to_csv(paths["neutralized_ic"], index=False, encoding="utf-8-sig")
+    holdout_quantile_table.to_csv(paths["holdout_quantile"], index=False, encoding="utf-8-sig")
     quality_table.to_csv(paths["quality"], index=False, encoding="utf-8-sig")
     correlation_table.to_csv(paths["correlation"], index=False, encoding="utf-8-sig")
     regime_ic_table.to_csv(paths["regime_ic"], index=False, encoding="utf-8-sig")
@@ -568,6 +618,8 @@ def run_factor_validation(
     min_cross_section: int,
     max_baseline_corr: float,
     feature_set: str | None = None,
+    train_end_date: str | None = None,
+    eval_start_date: str | None = None,
 ) -> dict[str, Any]:
     config = load_yaml(config_path)
     labels_config_path = project_root / "configs" / "labels.yaml"
@@ -579,6 +631,8 @@ def run_factor_validation(
         quantiles=quantiles,
         min_cross_section=min_cross_section,
         max_baseline_corr=max_baseline_corr,
+        train_end_date=train_end_date,
+        eval_start_date=eval_start_date,
     )
     df = read_dataset(project_root, config, validation_config.data_version)
     if validation_config.label_column not in df.columns:
@@ -590,6 +644,17 @@ def run_factor_validation(
         features = [feature for feature in selected if feature in features]
     if not features:
         raise ValueError("No lag1_ feature columns found in mart dataset.")
+
+    recommendation_df = df
+    evaluation_df = df
+    if validation_config.train_end_date:
+        recommendation_df = df[df["trade_date"].astype(str) <= validation_config.train_end_date].copy()
+    if validation_config.eval_start_date:
+        evaluation_df = df[df["trade_date"].astype(str) >= validation_config.eval_start_date].copy()
+    if recommendation_df.empty:
+        raise ValueError("Train-only recommendation window is empty.")
+    if evaluation_df.empty:
+        raise ValueError("Evaluation window is empty.")
 
     daily_ic_table = compute_daily_ic_table(df, features, validation_config.label_column, validation_config.min_cross_section)
     ic_table = summarize_ic_table(daily_ic_table, features)
@@ -609,6 +674,14 @@ def run_factor_validation(
     )
     quality_table = compute_quality_table(df, features)
     correlation_table = compute_correlation_table(df, features)
+    neutralized = build_neutralized_dataset(df, features, validation_config.label_column)
+    neutralized_features = [column for column in neutralized.columns if column.endswith("__neutral")]
+    neutralized_ic_table = compute_ic_table(
+        neutralized,
+        neutralized_features,
+        validation_config.label_column,
+        validation_config.min_cross_section,
+    )
     benchmark_regime = read_benchmark_regime_source(project_root, config, benchmark)
     regime_ic_table = compute_regime_ic_table(daily_ic_table, df, benchmark_regime, features)
     yearly_quantile_table = compute_yearly_quantile_table(
@@ -626,13 +699,39 @@ def run_factor_validation(
         validation_config.quantiles,
         validation_config.min_cross_section,
     )
+    recommendation_daily_ic = compute_daily_ic_table(
+        recommendation_df,
+        features,
+        validation_config.label_column,
+        validation_config.min_cross_section,
+    )
+    recommendation_ic = summarize_ic_table(recommendation_daily_ic, features)
+    recommendation_quantile = compute_quantile_table(
+        recommendation_df,
+        features,
+        validation_config.label_column,
+        validation_config.quantiles,
+        validation_config.min_cross_section,
+    )
+    recommendation_quality = compute_quality_table(recommendation_df, features)
+    recommendation_correlation = compute_correlation_table(recommendation_df, features)
     recommendation_table = build_feature_recommendations(
         features,
-        ic_table,
-        quantile_table,
-        quality_table,
-        correlation_table,
+        recommendation_ic,
+        recommendation_quantile,
+        recommendation_quality,
+        recommendation_correlation,
         validation_config.max_baseline_corr,
+    )
+    selected_by_train = recommendation_table[
+        recommendation_table["recommendation"].isin(["baseline", "advanced"])
+    ]["feature"].tolist()
+    holdout_quantile = compute_quantile_table(
+        evaluation_df,
+        selected_by_train,
+        validation_config.label_column,
+        validation_config.quantiles,
+        validation_config.min_cross_section,
     )
     output_dir = project_root / "outputs" / "factor_validation" / validation_config.data_version
     summary = {
@@ -643,6 +742,8 @@ def run_factor_validation(
         "stocks": int(df["ts_code"].nunique()),
         "features": int(len(features)),
         "feature_set": feature_set or "all_lag1",
+        "train_end_date": validation_config.train_end_date,
+        "eval_start_date": validation_config.eval_start_date,
         "quantiles": validation_config.quantiles,
         "min_cross_section": validation_config.min_cross_section,
         "max_baseline_corr": validation_config.max_baseline_corr,
@@ -652,6 +753,7 @@ def run_factor_validation(
         "dropped_features": recommendation_table[recommendation_table["recommendation"].eq("drop")]["feature"].tolist(),
         "top_abs_rank_ic": ic_table.head(10).to_dict(orient="records"),
         "top_abs_long_short": quantile_table.head(10).to_dict(orient="records"),
+        "top_holdout_long_short": holdout_quantile.head(10).to_dict(orient="records"),
         "generated_at": utc_now_iso(),
     }
     outputs = write_outputs(
@@ -661,6 +763,8 @@ def run_factor_validation(
         quantile_detail_table,
         yearly_quantile_table,
         regime_quantile_table,
+        neutralized_ic_table,
+        holdout_quantile,
         quality_table,
         correlation_table,
         regime_ic_table,
@@ -680,6 +784,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--min-cross-section", type=int, default=30)
     parser.add_argument("--max-baseline-corr", type=float, default=0.85)
     parser.add_argument("--feature-set", choices=["baseline_lightgbm", "advanced_sequence"])
+    parser.add_argument("--train-end-date")
+    parser.add_argument("--eval-start-date")
     return parser.parse_args()
 
 
@@ -695,6 +801,8 @@ def main() -> None:
         min_cross_section=args.min_cross_section,
         max_baseline_corr=args.max_baseline_corr,
         feature_set=args.feature_set,
+        train_end_date=args.train_end_date,
+        eval_start_date=args.eval_start_date,
     )
     print(json.dumps(result, ensure_ascii=False, indent=2))
 
