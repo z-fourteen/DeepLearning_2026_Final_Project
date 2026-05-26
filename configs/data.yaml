@@ -28,6 +28,42 @@ meta:
 logs:
   audit_dir: "logs/audit"
 
+pool:
+  default_index_code: "399006.SZ"
+  output_dir: "data/lake/core/chinext_pool"
+  scd2_file: "chinext_pool_scd2.parquet"
+  columns:
+    ts_code: string
+    index_code: string
+    effective_from: date_yyyymmdd
+    effective_to: date_yyyymmdd
+    index_weight: numeric
+    source_trade_date: date_yyyymmdd
+    name: string
+    industry: string
+    market: string
+    list_date: date_yyyymmdd
+    pool_version: string
+    is_active: boolean
+    created_at: timestamp
+
+state:
+  output_dir: "data/lake/state/security_daily_state.parquet"
+  min_listed_days: 0
+  columns:
+    trade_date: date_yyyymmdd
+    ts_code: string
+    is_st: boolean
+    is_suspended: boolean
+    is_limit_up: boolean
+    is_limit_down: boolean
+    is_tradable: boolean
+    listed_days: integer
+    volume_valid: boolean
+    price_valid: boolean
+    state_version: string
+    created_at: timestamp
+
 ingestion:
   append_only: true
   schema_validation:
