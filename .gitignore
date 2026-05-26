@@ -41,3 +41,12 @@ build/
 dist/
 *.egg-info/
 *.log
+
+# Local work traces
+worklog/
+
+# Generated pipeline artifacts
+data/lake/raw/**/*.parquet
+meta/file_registry.parquet
+meta/data_versions.parquet
+logs/audit/*.json
