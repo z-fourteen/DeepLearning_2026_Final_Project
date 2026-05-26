@@ -104,6 +104,7 @@ validation:
   regime_ic_enabled: true
   regime_definition: "historical_benchmark_ret20_vol20_amount60"
   supported_reports:
+    - factor_daily_ic
     - factor_ic_rankic
     - factor_quantile_long_short
     - factor_quantile_detail
@@ -115,7 +116,18 @@ validation:
     - feature_quality
     - feature_correlation_top
     - feature_recommendations
-  recommendation_source: "outputs/factor_validation/v20260526/feature_recommendations.csv"
+    - validation_profile
+  supported_stages:
+    - ic
+    - quality
+    - correlation
+    - regime-ic
+    - quantile
+    - extended-quantile
+    - neutralized
+    - recommendation
+  output_layout: "outputs/factor_validation/{data_version}/{feature_set}/{validation_mode}/"
+  recommendation_source: "outputs/factor_validation/v20260526/all_lag1/label_rel_return_q5_cs30_corr0p85_train_all_eval_all_quantile_on_ext_on_neutral_on/feature_recommendations.csv"
   collinearity_pruning_groups:
     - [lag1_ret_5d, lag1_ret_5d_mean]
     - [lag1_ret_20d, lag1_ret_20d_mean]

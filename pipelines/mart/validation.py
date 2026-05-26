@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -24,8 +25,158 @@ class ValidationConfig:
     eval_start_date: str | None = None
 
 
+STAGES = {
+    "all",
+    "ic",
+    "quality",
+    "correlation",
+    "regime-ic",
+    "quantile",
+    "extended-quantile",
+    "neutralized",
+    "recommendation",
+}
+
+QUANTILE_COLUMNS = [
+    "feature",
+    "quantiles",
+    "q1_mean_return",
+    "q_top_mean_return",
+    "long_short_mean_return",
+    "long_short_t_stat",
+    "long_short_win_ratio",
+    "long_short_max_drawdown",
+    "days",
+]
+
+
 def utc_now_iso() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
+
+
+def output_paths(output_dir: Path) -> dict[str, Path]:
+    return {
+        "daily_ic": output_dir / "factor_daily_ic.csv",
+        "ic": output_dir / "factor_ic_rankic.csv",
+        "quantile": output_dir / "factor_quantile_long_short.csv",
+        "quantile_detail": output_dir / "factor_quantile_detail.csv",
+        "yearly_quantile": output_dir / "factor_yearly_quantile_long_short.csv",
+        "regime_quantile": output_dir / "factor_regime_quantile_long_short.csv",
+        "neutralized_ic": output_dir / "factor_neutralized_ic.csv",
+        "holdout_quantile": output_dir / "factor_holdout_quantile_long_short.csv",
+        "quality": output_dir / "feature_quality.csv",
+        "correlation": output_dir / "feature_correlation_top.csv",
+        "regime_ic": output_dir / "factor_regime_ic.csv",
+        "recommendations": output_dir / "feature_recommendations.csv",
+        "summary": output_dir / "factor_validation_summary.json",
+        "profile": output_dir / "validation_profile.json",
+    }
+
+
+def safe_path_token(value: str | int | float | None) -> str:
+    if value is None or value == "":
+        return "all"
+    return str(value).replace(".", "p").replace("-", "m").replace("/", "_").replace("\\", "_")
+
+
+def validation_mode_id(
+    label_column: str,
+    quantiles: int,
+    min_cross_section: int,
+    max_baseline_corr: float,
+    train_end_date: str | None,
+    eval_start_date: str | None,
+    skip_quantile: bool,
+    skip_extended_quantile: bool,
+    skip_neutralized: bool,
+) -> str:
+    parts = [
+        safe_path_token(label_column),
+        f"q{quantiles}",
+        f"cs{min_cross_section}",
+        f"corr{safe_path_token(max_baseline_corr)}",
+        f"train_{safe_path_token(train_end_date)}",
+        f"eval_{safe_path_token(eval_start_date)}",
+        f"quantile_{'off' if skip_quantile else 'on'}",
+        f"ext_{'off' if skip_extended_quantile else 'on'}",
+        f"neutral_{'off' if skip_neutralized else 'on'}",
+    ]
+    return "_".join(parts)
+
+
+def validation_output_dir(project_root: Path, data_version: str, feature_set: str | None, mode_id: str) -> Path:
+    scope = feature_set or "all_lag1"
+    return project_root / "outputs" / "factor_validation" / data_version / scope / mode_id
+
+
+def should_run_stage(requested_stage: str, stage: str) -> bool:
+    return requested_stage == "all" or requested_stage == stage
+
+
+def empty_quantile_table() -> pd.DataFrame:
+    return pd.DataFrame(columns=QUANTILE_COLUMNS)
+
+
+def read_csv_checkpoint(path: Path) -> pd.DataFrame | None:
+    if not path.exists():
+        return None
+    try:
+        return pd.read_csv(path)
+    except pd.errors.EmptyDataError:
+        return pd.DataFrame()
+
+
+def write_csv_checkpoint(df: pd.DataFrame, path: Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    df.to_csv(path, index=False, encoding="utf-8-sig")
+
+
+def frame_memory_mb(df: pd.DataFrame) -> float:
+    return float(df.memory_usage(deep=True).sum() / 1024 / 1024)
+
+
+def append_profile_event(output_dir: Path, event: dict[str, Any]) -> None:
+    paths = output_paths(output_dir)
+    events: list[dict[str, Any]] = []
+    if paths["profile"].exists():
+        try:
+            events = json.loads(paths["profile"].read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            events = []
+    events.append(event)
+    paths["profile"].write_text(json.dumps(events, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def profile_stage(
+    output_dir: Path,
+    stage: str,
+    status: str,
+    started_at: float,
+    df: pd.DataFrame,
+    features: list[str],
+    outputs: list[Path],
+) -> None:
+    append_profile_event(
+        output_dir,
+        {
+            "stage": stage,
+            "status": status,
+            "elapsed_seconds": round(time.perf_counter() - started_at, 3),
+            "rows": int(len(df)),
+            "trade_dates": int(df["trade_date"].nunique()) if "trade_date" in df.columns else None,
+            "stocks": int(df["ts_code"].nunique()) if "ts_code" in df.columns else None,
+            "features": int(len(features)),
+            "dataset_memory_mb": round(frame_memory_mb(df), 3),
+            "outputs": [str(path) for path in outputs],
+            "finished_at": utc_now_iso(),
+        },
+    )
+
+
+def recommended_features(table: pd.DataFrame, recommendation: str) -> list[str]:
+    if table.empty or "recommendation" not in table.columns or "feature" not in table.columns:
+        return []
+    return table[table["recommendation"].eq(recommendation)]["feature"].tolist()
 
 
 def read_dataset(project_root: Path, config: dict[str, Any], data_version: str) -> pd.DataFrame:
@@ -151,27 +302,32 @@ def _pearson_ic(group: pd.DataFrame, feature: str, label_column: str, method: st
 
 def compute_daily_ic_table(df: pd.DataFrame, features: list[str], label_column: str, min_cross_section: int) -> pd.DataFrame:
     records: list[dict[str, Any]] = []
-    grouped = df.groupby("trade_date", sort=True)
     for feature in features:
-        for trade_date, group in grouped:
-            valid_count = int(
-                group[[feature, label_column]]
-                .apply(pd.to_numeric, errors="coerce")
-                .replace([np.inf, -np.inf], np.nan)
-                .dropna()
-                .shape[0]
-            )
-            if valid_count < min_cross_section:
-                continue
-            records.append(
-                {
-                    "trade_date": trade_date,
-                    "feature": feature,
-                    "ic": _pearson_ic(group, feature, label_column, "pearson"),
-                    "rank_ic": _pearson_ic(group, feature, label_column, "spearman"),
-                    "n": valid_count,
-                }
-            )
+        data = df[["trade_date", feature, label_column]].copy()
+        data[feature] = pd.to_numeric(data[feature], errors="coerce")
+        data[label_column] = pd.to_numeric(data[label_column], errors="coerce")
+        data = data.replace([np.inf, -np.inf], np.nan).dropna()
+        if data.empty:
+            continue
+        counts = data.groupby("trade_date").size()
+        valid_dates = counts[counts >= min_cross_section].index
+        data = data[data["trade_date"].isin(valid_dates)]
+        if data.empty:
+            continue
+
+        pearson = data.groupby("trade_date")[[feature, label_column]].corr()
+        pearson = pearson.xs(feature, level=1)[label_column].rename("ic")
+
+        ranked = data.copy()
+        ranked[feature] = ranked.groupby("trade_date")[feature].rank(method="average")
+        ranked[label_column] = ranked.groupby("trade_date")[label_column].rank(method="average")
+        spearman = ranked.groupby("trade_date")[[feature, label_column]].corr()
+        spearman = spearman.xs(feature, level=1)[label_column].rename("rank_ic")
+
+        daily = pd.concat([pearson, spearman, counts.rename("n")], axis=1).reset_index()
+        daily = daily[daily["trade_date"].isin(valid_dates)]
+        daily["feature"] = feature
+        records.extend(daily[["trade_date", "feature", "ic", "rank_ic", "n"]].to_dict(orient="records"))
     return pd.DataFrame(records)
 
 
@@ -580,20 +736,7 @@ def write_outputs(
     summary: dict[str, Any],
 ) -> dict[str, str]:
     output_dir.mkdir(parents=True, exist_ok=True)
-    paths = {
-        "ic": output_dir / "factor_ic_rankic.csv",
-        "quantile": output_dir / "factor_quantile_long_short.csv",
-        "quantile_detail": output_dir / "factor_quantile_detail.csv",
-        "yearly_quantile": output_dir / "factor_yearly_quantile_long_short.csv",
-        "regime_quantile": output_dir / "factor_regime_quantile_long_short.csv",
-        "neutralized_ic": output_dir / "factor_neutralized_ic.csv",
-        "holdout_quantile": output_dir / "factor_holdout_quantile_long_short.csv",
-        "quality": output_dir / "feature_quality.csv",
-        "correlation": output_dir / "feature_correlation_top.csv",
-        "regime_ic": output_dir / "factor_regime_ic.csv",
-        "recommendations": output_dir / "feature_recommendations.csv",
-        "summary": output_dir / "factor_validation_summary.json",
-    }
+    paths = output_paths(output_dir)
     ic_table.to_csv(paths["ic"], index=False, encoding="utf-8-sig")
     quantile_table.to_csv(paths["quantile"], index=False, encoding="utf-8-sig")
     quantile_detail_table.to_csv(paths["quantile_detail"], index=False, encoding="utf-8-sig")
@@ -620,7 +763,14 @@ def run_factor_validation(
     feature_set: str | None = None,
     train_end_date: str | None = None,
     eval_start_date: str | None = None,
+    skip_neutralized: bool = False,
+    skip_extended_quantile: bool = False,
+    skip_quantile: bool = False,
+    stage: str = "all",
+    resume: bool = False,
 ) -> dict[str, Any]:
+    if stage not in STAGES:
+        raise ValueError(f"Unsupported validation stage: {stage}")
     config = load_yaml(config_path)
     labels_config_path = project_root / "configs" / "labels.yaml"
     labels_config = load_yaml(labels_config_path) if labels_config_path.exists() else {}
@@ -656,84 +806,282 @@ def run_factor_validation(
     if evaluation_df.empty:
         raise ValueError("Evaluation window is empty.")
 
-    daily_ic_table = compute_daily_ic_table(df, features, validation_config.label_column, validation_config.min_cross_section)
-    ic_table = summarize_ic_table(daily_ic_table, features)
-    quantile_table = compute_quantile_table(
-        df,
-        features,
-        validation_config.label_column,
-        validation_config.quantiles,
-        validation_config.min_cross_section,
+    mode_id = validation_mode_id(
+        label_column=validation_config.label_column,
+        quantiles=validation_config.quantiles,
+        min_cross_section=validation_config.min_cross_section,
+        max_baseline_corr=validation_config.max_baseline_corr,
+        train_end_date=validation_config.train_end_date,
+        eval_start_date=validation_config.eval_start_date,
+        skip_quantile=skip_quantile,
+        skip_extended_quantile=skip_extended_quantile,
+        skip_neutralized=skip_neutralized,
     )
-    quantile_detail_table = compute_quantile_detail_table(
-        df,
-        features,
-        validation_config.label_column,
-        validation_config.quantiles,
-        validation_config.min_cross_section,
-    )
-    quality_table = compute_quality_table(df, features)
-    correlation_table = compute_correlation_table(df, features)
-    neutralized = build_neutralized_dataset(df, features, validation_config.label_column)
-    neutralized_features = [column for column in neutralized.columns if column.endswith("__neutral")]
-    neutralized_ic_table = compute_ic_table(
-        neutralized,
-        neutralized_features,
-        validation_config.label_column,
-        validation_config.min_cross_section,
-    )
-    benchmark_regime = read_benchmark_regime_source(project_root, config, benchmark)
-    regime_ic_table = compute_regime_ic_table(daily_ic_table, df, benchmark_regime, features)
-    yearly_quantile_table = compute_yearly_quantile_table(
-        df,
-        features,
-        validation_config.label_column,
-        validation_config.quantiles,
-        validation_config.min_cross_section,
-    )
-    regime_quantile_table = compute_regime_quantile_table(
-        df,
-        features,
-        validation_config.label_column,
-        benchmark_regime,
-        validation_config.quantiles,
-        validation_config.min_cross_section,
-    )
-    recommendation_daily_ic = compute_daily_ic_table(
-        recommendation_df,
-        features,
-        validation_config.label_column,
-        validation_config.min_cross_section,
-    )
-    recommendation_ic = summarize_ic_table(recommendation_daily_ic, features)
-    recommendation_quantile = compute_quantile_table(
-        recommendation_df,
-        features,
-        validation_config.label_column,
-        validation_config.quantiles,
-        validation_config.min_cross_section,
-    )
-    recommendation_quality = compute_quality_table(recommendation_df, features)
-    recommendation_correlation = compute_correlation_table(recommendation_df, features)
-    recommendation_table = build_feature_recommendations(
-        features,
-        recommendation_ic,
-        recommendation_quantile,
-        recommendation_quality,
-        recommendation_correlation,
-        validation_config.max_baseline_corr,
-    )
-    selected_by_train = recommendation_table[
-        recommendation_table["recommendation"].isin(["baseline", "advanced"])
-    ]["feature"].tolist()
-    holdout_quantile = compute_quantile_table(
-        evaluation_df,
-        selected_by_train,
-        validation_config.label_column,
-        validation_config.quantiles,
-        validation_config.min_cross_section,
-    )
-    output_dir = project_root / "outputs" / "factor_validation" / validation_config.data_version
+    output_dir = validation_output_dir(project_root, validation_config.data_version, feature_set, mode_id)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    paths = output_paths(output_dir)
+
+    daily_ic_table = read_csv_checkpoint(paths["daily_ic"])
+    daily_ic_table = daily_ic_table if daily_ic_table is not None else pd.DataFrame()
+    ic_table = read_csv_checkpoint(paths["ic"])
+    ic_table = ic_table if ic_table is not None else pd.DataFrame()
+    quantile_table = read_csv_checkpoint(paths["quantile"])
+    quantile_table = quantile_table if quantile_table is not None else empty_quantile_table()
+    quantile_detail_table = read_csv_checkpoint(paths["quantile_detail"])
+    quantile_detail_table = quantile_detail_table if quantile_detail_table is not None else pd.DataFrame()
+    quality_table = read_csv_checkpoint(paths["quality"])
+    quality_table = quality_table if quality_table is not None else pd.DataFrame()
+    correlation_table = read_csv_checkpoint(paths["correlation"])
+    correlation_table = correlation_table if correlation_table is not None else pd.DataFrame()
+    neutralized_ic_table = read_csv_checkpoint(paths["neutralized_ic"])
+    neutralized_ic_table = neutralized_ic_table if neutralized_ic_table is not None else pd.DataFrame()
+    regime_ic_table = read_csv_checkpoint(paths["regime_ic"])
+    regime_ic_table = regime_ic_table if regime_ic_table is not None else pd.DataFrame()
+    yearly_quantile_table = read_csv_checkpoint(paths["yearly_quantile"])
+    yearly_quantile_table = yearly_quantile_table if yearly_quantile_table is not None else pd.DataFrame()
+    regime_quantile_table = read_csv_checkpoint(paths["regime_quantile"])
+    regime_quantile_table = regime_quantile_table if regime_quantile_table is not None else pd.DataFrame()
+    recommendation_table = read_csv_checkpoint(paths["recommendations"])
+    recommendation_table = recommendation_table if recommendation_table is not None else pd.DataFrame()
+    holdout_quantile = read_csv_checkpoint(paths["holdout_quantile"])
+    holdout_quantile = holdout_quantile if holdout_quantile is not None else empty_quantile_table()
+
+    if should_run_stage(stage, "ic"):
+        started_at = time.perf_counter()
+        if resume and paths["daily_ic"].exists() and paths["ic"].exists():
+            daily_ic_table = pd.read_csv(paths["daily_ic"])
+            ic_table = pd.read_csv(paths["ic"])
+            profile_stage(output_dir, "ic", "resumed", started_at, df, features, [paths["daily_ic"], paths["ic"]])
+        else:
+            daily_ic_table = compute_daily_ic_table(df, features, validation_config.label_column, validation_config.min_cross_section)
+            ic_table = summarize_ic_table(daily_ic_table, features)
+            write_csv_checkpoint(daily_ic_table, paths["daily_ic"])
+            write_csv_checkpoint(ic_table, paths["ic"])
+            profile_stage(output_dir, "ic", "computed", started_at, df, features, [paths["daily_ic"], paths["ic"]])
+
+    if should_run_stage(stage, "quality"):
+        started_at = time.perf_counter()
+        if resume and paths["quality"].exists():
+            quality_table = pd.read_csv(paths["quality"])
+            profile_stage(output_dir, "quality", "resumed", started_at, df, features, [paths["quality"]])
+        else:
+            quality_table = compute_quality_table(df, features)
+            write_csv_checkpoint(quality_table, paths["quality"])
+            profile_stage(output_dir, "quality", "computed", started_at, df, features, [paths["quality"]])
+
+    if should_run_stage(stage, "correlation"):
+        started_at = time.perf_counter()
+        if resume and paths["correlation"].exists():
+            correlation_table = pd.read_csv(paths["correlation"])
+            profile_stage(output_dir, "correlation", "resumed", started_at, df, features, [paths["correlation"]])
+        else:
+            correlation_table = compute_correlation_table(df, features)
+            write_csv_checkpoint(correlation_table, paths["correlation"])
+            profile_stage(output_dir, "correlation", "computed", started_at, df, features, [paths["correlation"]])
+
+    if should_run_stage(stage, "quantile"):
+        started_at = time.perf_counter()
+        if skip_quantile:
+            quantile_table = empty_quantile_table()
+            write_csv_checkpoint(quantile_table, paths["quantile"])
+            profile_stage(output_dir, "quantile", "skipped", started_at, df, features, [paths["quantile"]])
+        elif resume and paths["quantile"].exists():
+            quantile_table = pd.read_csv(paths["quantile"])
+            profile_stage(output_dir, "quantile", "resumed", started_at, df, features, [paths["quantile"]])
+        else:
+            quantile_table = compute_quantile_table(
+                df,
+                features,
+                validation_config.label_column,
+                validation_config.quantiles,
+                validation_config.min_cross_section,
+            )
+            write_csv_checkpoint(quantile_table, paths["quantile"])
+            profile_stage(output_dir, "quantile", "computed", started_at, df, features, [paths["quantile"]])
+
+    if should_run_stage(stage, "extended-quantile"):
+        started_at = time.perf_counter()
+        if skip_extended_quantile:
+            quantile_detail_table = pd.DataFrame()
+            yearly_quantile_table = pd.DataFrame()
+            regime_quantile_table = pd.DataFrame()
+            for path in [paths["quantile_detail"], paths["yearly_quantile"], paths["regime_quantile"]]:
+                write_csv_checkpoint(pd.DataFrame(), path)
+            profile_stage(
+                output_dir,
+                "extended-quantile",
+                "skipped",
+                started_at,
+                df,
+                features,
+                [paths["quantile_detail"], paths["yearly_quantile"], paths["regime_quantile"]],
+            )
+        elif (
+            resume
+            and paths["quantile_detail"].exists()
+            and paths["yearly_quantile"].exists()
+            and paths["regime_quantile"].exists()
+        ):
+            quantile_detail_table = pd.read_csv(paths["quantile_detail"])
+            yearly_quantile_table = pd.read_csv(paths["yearly_quantile"])
+            regime_quantile_table = pd.read_csv(paths["regime_quantile"])
+            profile_stage(
+                output_dir,
+                "extended-quantile",
+                "resumed",
+                started_at,
+                df,
+                features,
+                [paths["quantile_detail"], paths["yearly_quantile"], paths["regime_quantile"]],
+            )
+        else:
+            benchmark_regime = read_benchmark_regime_source(project_root, config, benchmark)
+            quantile_detail_table = compute_quantile_detail_table(
+                df,
+                features,
+                validation_config.label_column,
+                validation_config.quantiles,
+                validation_config.min_cross_section,
+            )
+            yearly_quantile_table = compute_yearly_quantile_table(
+                df,
+                features,
+                validation_config.label_column,
+                validation_config.quantiles,
+                validation_config.min_cross_section,
+            )
+            regime_quantile_table = compute_regime_quantile_table(
+                df,
+                features,
+                validation_config.label_column,
+                benchmark_regime,
+                validation_config.quantiles,
+                validation_config.min_cross_section,
+            )
+            write_csv_checkpoint(quantile_detail_table, paths["quantile_detail"])
+            write_csv_checkpoint(yearly_quantile_table, paths["yearly_quantile"])
+            write_csv_checkpoint(regime_quantile_table, paths["regime_quantile"])
+            profile_stage(
+                output_dir,
+                "extended-quantile",
+                "computed",
+                started_at,
+                df,
+                features,
+                [paths["quantile_detail"], paths["yearly_quantile"], paths["regime_quantile"]],
+            )
+
+    if should_run_stage(stage, "neutralized"):
+        started_at = time.perf_counter()
+        if skip_neutralized:
+            neutralized_ic_table = pd.DataFrame()
+            write_csv_checkpoint(neutralized_ic_table, paths["neutralized_ic"])
+            profile_stage(output_dir, "neutralized", "skipped", started_at, df, features, [paths["neutralized_ic"]])
+        elif resume and paths["neutralized_ic"].exists():
+            neutralized_ic_table = pd.read_csv(paths["neutralized_ic"])
+            profile_stage(output_dir, "neutralized", "resumed", started_at, df, features, [paths["neutralized_ic"]])
+        else:
+            neutralized = build_neutralized_dataset(df, features, validation_config.label_column)
+            neutralized_features = [column for column in neutralized.columns if column.endswith("__neutral")]
+            neutralized_ic_table = compute_ic_table(
+                neutralized,
+                neutralized_features,
+                validation_config.label_column,
+                validation_config.min_cross_section,
+            )
+            write_csv_checkpoint(neutralized_ic_table, paths["neutralized_ic"])
+            profile_stage(output_dir, "neutralized", "computed", started_at, df, features, [paths["neutralized_ic"]])
+
+    if should_run_stage(stage, "regime-ic"):
+        started_at = time.perf_counter()
+        if resume and paths["regime_ic"].exists():
+            regime_ic_table = pd.read_csv(paths["regime_ic"])
+            profile_stage(output_dir, "regime-ic", "resumed", started_at, df, features, [paths["regime_ic"]])
+        else:
+            if daily_ic_table.empty:
+                if paths["daily_ic"].exists():
+                    daily_ic_table = pd.read_csv(paths["daily_ic"])
+                else:
+                    daily_ic_table = compute_daily_ic_table(
+                        df,
+                        features,
+                        validation_config.label_column,
+                        validation_config.min_cross_section,
+                    )
+                    write_csv_checkpoint(daily_ic_table, paths["daily_ic"])
+            benchmark_regime = read_benchmark_regime_source(project_root, config, benchmark)
+            regime_ic_table = compute_regime_ic_table(daily_ic_table, df, benchmark_regime, features)
+            write_csv_checkpoint(regime_ic_table, paths["regime_ic"])
+            profile_stage(output_dir, "regime-ic", "computed", started_at, df, features, [paths["regime_ic"]])
+
+    if should_run_stage(stage, "recommendation"):
+        started_at = time.perf_counter()
+        if resume and paths["recommendations"].exists() and (skip_quantile or paths["holdout_quantile"].exists()):
+            recommendation_table = pd.read_csv(paths["recommendations"])
+            holdout_quantile = empty_quantile_table() if skip_quantile else pd.read_csv(paths["holdout_quantile"])
+            profile_stage(
+                output_dir,
+                "recommendation",
+                "resumed",
+                started_at,
+                df,
+                features,
+                [paths["recommendations"], paths["holdout_quantile"]],
+            )
+        else:
+            recommendation_daily_ic = compute_daily_ic_table(
+                recommendation_df,
+                features,
+                validation_config.label_column,
+                validation_config.min_cross_section,
+            )
+            recommendation_ic = summarize_ic_table(recommendation_daily_ic, features)
+            recommendation_quantile = (
+                empty_quantile_table()
+                if skip_quantile
+                else compute_quantile_table(
+                    recommendation_df,
+                    features,
+                    validation_config.label_column,
+                    validation_config.quantiles,
+                    validation_config.min_cross_section,
+                )
+            )
+            recommendation_quality = compute_quality_table(recommendation_df, features)
+            recommendation_correlation = compute_correlation_table(recommendation_df, features)
+            recommendation_table = build_feature_recommendations(
+                features,
+                recommendation_ic,
+                recommendation_quantile,
+                recommendation_quality,
+                recommendation_correlation,
+                validation_config.max_baseline_corr,
+            )
+            selected_by_train = recommendation_table[
+                recommendation_table["recommendation"].isin(["baseline", "advanced"])
+            ]["feature"].tolist()
+            holdout_quantile = (
+                empty_quantile_table()
+                if skip_quantile
+                else compute_quantile_table(
+                    evaluation_df,
+                    selected_by_train,
+                    validation_config.label_column,
+                    validation_config.quantiles,
+                    validation_config.min_cross_section,
+                )
+            )
+            write_csv_checkpoint(recommendation_table, paths["recommendations"])
+            write_csv_checkpoint(holdout_quantile, paths["holdout_quantile"])
+            profile_stage(
+                output_dir,
+                "recommendation",
+                "computed",
+                started_at,
+                df,
+                features,
+                [paths["recommendations"], paths["holdout_quantile"]],
+            )
     summary = {
         "data_version": validation_config.data_version,
         "label_column": validation_config.label_column,
@@ -742,35 +1090,29 @@ def run_factor_validation(
         "stocks": int(df["ts_code"].nunique()),
         "features": int(len(features)),
         "feature_set": feature_set or "all_lag1",
+        "validation_mode": mode_id,
+        "output_dir": str(output_dir),
         "train_end_date": validation_config.train_end_date,
         "eval_start_date": validation_config.eval_start_date,
         "quantiles": validation_config.quantiles,
         "min_cross_section": validation_config.min_cross_section,
         "max_baseline_corr": validation_config.max_baseline_corr,
         "regime_definition": "historical_benchmark_ret20_vol20_amount60",
-        "baseline_features": recommendation_table[recommendation_table["recommendation"].eq("baseline")]["feature"].tolist(),
-        "advanced_features": recommendation_table[recommendation_table["recommendation"].eq("advanced")]["feature"].tolist(),
-        "dropped_features": recommendation_table[recommendation_table["recommendation"].eq("drop")]["feature"].tolist(),
+        "neutralized_ic_skipped": skip_neutralized,
+        "quantile_skipped": skip_quantile,
+        "extended_quantile_skipped": skip_extended_quantile,
+        "stage": stage,
+        "resume": resume,
+        "baseline_features": recommended_features(recommendation_table, "baseline"),
+        "advanced_features": recommended_features(recommendation_table, "advanced"),
+        "dropped_features": recommended_features(recommendation_table, "drop"),
         "top_abs_rank_ic": ic_table.head(10).to_dict(orient="records"),
         "top_abs_long_short": quantile_table.head(10).to_dict(orient="records"),
         "top_holdout_long_short": holdout_quantile.head(10).to_dict(orient="records"),
         "generated_at": utc_now_iso(),
     }
-    outputs = write_outputs(
-        output_dir,
-        ic_table,
-        quantile_table,
-        quantile_detail_table,
-        yearly_quantile_table,
-        regime_quantile_table,
-        neutralized_ic_table,
-        holdout_quantile,
-        quality_table,
-        correlation_table,
-        regime_ic_table,
-        recommendation_table,
-        summary,
-    )
+    paths["summary"].write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
+    outputs = {key: str(path) for key, path in paths.items()}
     return {"summary": summary, "outputs": outputs}
 
 
@@ -786,6 +1128,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--feature-set", choices=["baseline_lightgbm", "advanced_sequence"])
     parser.add_argument("--train-end-date")
     parser.add_argument("--eval-start-date")
+    parser.add_argument("--skip-neutralized", action="store_true")
+    parser.add_argument("--skip-quantile", action="store_true")
+    parser.add_argument("--skip-extended-quantile", action="store_true")
+    parser.add_argument("--stage", choices=sorted(STAGES), default="all")
+    parser.add_argument("--resume", action="store_true")
     return parser.parse_args()
 
 
@@ -803,6 +1150,11 @@ def main() -> None:
         feature_set=args.feature_set,
         train_end_date=args.train_end_date,
         eval_start_date=args.eval_start_date,
+        skip_neutralized=args.skip_neutralized,
+        skip_quantile=args.skip_quantile,
+        skip_extended_quantile=args.skip_extended_quantile,
+        stage=args.stage,
+        resume=args.resume,
     )
     print(json.dumps(result, ensure_ascii=False, indent=2))
 
