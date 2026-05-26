@@ -1,0 +1,3 @@
+rolling_windows: [5, 10, 20, 60]
+cache_dir: "data/cache/rolling_features"
+future_shift_allowed: false

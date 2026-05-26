@@ -1,0 +1,36 @@
+raw:
+  basic:
+    required_columns: [ts_code, symbol, name, market, list_date]
+  trade_cal:
+    required_columns: [exchange, cal_date, is_open, pretrade_date]
+  daily:
+    required_columns: [ts_code, trade_date, open, high, low, close, pre_close, vol, amount]
+  stock_st:
+    required_columns: [ts_code, trade_date, type]
+  index_weight:
+    required_columns: [index_code, con_code, trade_date, weight]
+
+state:
+  security_daily_state:
+    columns:
+      - trade_date
+      - ts_code
+      - is_st
+      - is_suspended
+      - is_limit_up
+      - is_limit_down
+      - is_tradable
+      - listed_days
+      - volume_valid
+      - price_valid
+      - state_version
+
+core:
+  chinext_pool_scd2:
+    columns:
+      - ts_code
+      - index_code
+      - effective_from
+      - effective_to
+      - index_weight
+      - pool_version

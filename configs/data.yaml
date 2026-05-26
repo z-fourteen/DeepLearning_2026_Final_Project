@@ -1,0 +1,55 @@
+project:
+  name: incremental_quant_pipeline
+  timezone: Asia/Shanghai
+
+source:
+  root_dir: "A股数据"
+  csv_encoding: "utf-8"
+
+lake:
+  raw_dir: "data/lake/raw"
+  core_dir: "data/lake/core"
+  state_dir: "data/lake/state"
+  audit_dir: "data/lake/audit"
+
+mart:
+  features_dir: "data/mart/features_daily"
+  labels_dir: "data/mart/labels"
+  datasets_dir: "data/mart/datasets"
+
+cache:
+  rolling_features_dir: "data/cache/rolling_features"
+
+meta:
+  file_registry: "meta/file_registry.parquet"
+  data_versions: "meta/data_versions.parquet"
+  schema_registry: "meta/schema_registry.yaml"
+
+logs:
+  audit_dir: "logs/audit"
+
+ingestion:
+  append_only: true
+  datasets:
+    basic:
+      path: "basic.csv"
+      layout: single_file
+      date_from: none
+    trade_cal:
+      path: "trade_cal.csv"
+      layout: single_file
+      date_from: column
+      date_column: cal_date
+    daily:
+      path: "daily"
+      layout: dated_files
+      date_from: filename
+    stock_st:
+      path: "stock_st"
+      layout: dated_files
+      date_from: filename
+    index_weight:
+      path: "index_weight"
+      layout: monthly_index_files
+      date_from: column
+      date_column: trade_date
