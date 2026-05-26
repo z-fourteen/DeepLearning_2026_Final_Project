@@ -12,6 +12,17 @@ from pipelines.ingest.agent import load_yaml
 
 
 OPEN_ENDED_DATE = "99991231"
+POOL_REGISTRY_COLUMNS = [
+    "index_code",
+    "source_path",
+    "filename",
+    "md5",
+    "raw_path",
+    "trade_date_min",
+    "trade_date_max",
+    "data_version",
+    "processed_at",
+]
 
 
 def utc_now_iso() -> str:
@@ -44,6 +55,83 @@ def read_raw_dataset(project_root: Path, registry: pd.DataFrame, dataset: str) -
     if not frames:
         return pd.DataFrame()
     return pd.concat(frames, ignore_index=True)
+
+
+def pool_registry_path(project_root: Path, config: dict[str, Any]) -> Path:
+    configured = config.get("meta", {}).get("pool_registry", "meta/pool_registry.parquet")
+    return project_root / configured
+
+
+def read_pool_registry(project_root: Path, config: dict[str, Any]) -> pd.DataFrame:
+    path = pool_registry_path(project_root, config)
+    if not path.exists():
+        return pd.DataFrame(columns=POOL_REGISTRY_COLUMNS)
+    registry = pd.read_parquet(path)
+    for column in POOL_REGISTRY_COLUMNS:
+        if column not in registry.columns:
+            registry[column] = None
+    return registry[POOL_REGISTRY_COLUMNS]
+
+
+def index_weight_registry(registry: pd.DataFrame, index_code: str) -> pd.DataFrame:
+    rows = registry[(registry["dataset"] == "index_weight") & (registry["status"] == "ingested")].copy()
+    if rows.empty:
+        return rows
+    filename_match = rows["filename"].astype(str).str.contains(index_code, regex=False)
+    path_match = rows["raw_path"].astype(str).str.contains(index_code, regex=False)
+    return rows[filename_match | path_match].copy()
+
+
+def changed_index_weight_files(file_registry: pd.DataFrame, pool_registry: pd.DataFrame, index_code: str) -> pd.DataFrame:
+    current = index_weight_registry(file_registry, index_code)
+    if current.empty:
+        return current
+    if pool_registry.empty:
+        return current
+    processed = (
+        pool_registry[pool_registry["index_code"].astype(str) == index_code]
+        .sort_values("processed_at")
+        .drop_duplicates("source_path", keep="last")
+        .set_index("source_path")
+    )
+    changed_rows = []
+    for row in current.itertuples(index=False):
+        previous = processed.loc[row.source_path] if row.source_path in processed.index else None
+        if previous is None or str(previous["md5"]) != str(row.md5):
+            changed_rows.append(row._asdict())
+    return pd.DataFrame(changed_rows)
+
+
+def write_pool_registry(
+    project_root: Path,
+    config: dict[str, Any],
+    file_registry: pd.DataFrame,
+    index_code: str,
+    data_version: str,
+) -> None:
+    path = pool_registry_path(project_root, config)
+    existing = read_pool_registry(project_root, config)
+    current = index_weight_registry(file_registry, index_code)
+    processed_at = utc_now_iso()
+    rows = pd.DataFrame(
+        [
+            {
+                "index_code": index_code,
+                "source_path": row.source_path,
+                "filename": row.filename,
+                "md5": row.md5,
+                "raw_path": row.raw_path,
+                "trade_date_min": row.trade_date_min,
+                "trade_date_max": row.trade_date_max,
+                "data_version": data_version,
+                "processed_at": processed_at,
+            }
+            for row in current.itertuples(index=False)
+        ]
+    )
+    updated = pd.concat([existing, rows], ignore_index=True) if not existing.empty else rows
+    path.parent.mkdir(parents=True, exist_ok=True)
+    updated[POOL_REGISTRY_COLUMNS].to_parquet(path, index=False)
 
 
 def normalize_index_weight(index_weight: pd.DataFrame, index_code: str) -> pd.DataFrame:
@@ -218,6 +306,8 @@ def update_audit(project_root: Path, config: dict[str, Any], data_version: str, 
             "pool_active_intervals": metrics["pool_active_intervals"],
             "pool_closed_intervals": metrics["pool_closed_intervals"],
             "pool_unique_stocks": metrics["pool_unique_stocks"],
+            "pool_changed_files": metrics.get("pool_changed_files", 0),
+            "pool_execution_mode": metrics.get("pool_execution_mode", "unknown"),
             "pool_updated_at": utc_now_iso(),
         }
     )
@@ -232,10 +322,35 @@ def run_pool_agent(
     index_code: str | None = None,
     overwrite: bool = False,
     dry_run: bool = False,
+    incremental: bool = True,
+    backfill: bool = False,
 ) -> dict[str, Any]:
     config = load_yaml(config_path)
     registry = read_file_registry(project_root, config)
     index_code = index_code or config["pool"]["default_index_code"]
+    pool_registry = read_pool_registry(project_root, config)
+    changed_files = changed_index_weight_files(registry, pool_registry, index_code)
+    execution_mode = "backfill" if backfill else "incremental"
+
+    if incremental and not backfill and changed_files.empty:
+        path = output_path(project_root, config)
+        metrics = {
+            "survivorship_bias_check": "SKIP_NO_CHANGES",
+            "pool_intervals": 0,
+            "pool_active_intervals": 0,
+            "pool_closed_intervals": 0,
+            "pool_unique_stocks": 0,
+            "pool_changed_files": 0,
+            "pool_execution_mode": execution_mode,
+        }
+        return {
+            "data_version": data_version,
+            "index_code": index_code,
+            "output_path": str(path),
+            "dry_run": dry_run,
+            "skipped": True,
+            **metrics,
+        }
 
     index_weight = read_raw_dataset(project_root, registry, "index_weight")
     basic = read_raw_dataset(project_root, registry, "basic")
@@ -245,10 +360,13 @@ def run_pool_agent(
     scd = build_scd2_intervals(snapshots, data_version)
     scd = enrich_with_basic(scd, basic)
     metrics = validate_scd2(scd)
+    metrics["pool_changed_files"] = int(len(changed_files))
+    metrics["pool_execution_mode"] = execution_mode
     path = output_path(project_root, config)
 
     if not dry_run:
         path = write_pool(scd, project_root, config, overwrite=overwrite)
+        write_pool_registry(project_root, config, registry, index_code, data_version)
         update_audit(project_root, config, data_version, metrics)
 
     return {
@@ -268,6 +386,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--index-code")
     parser.add_argument("--overwrite", action="store_true")
     parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument("--incremental", action="store_true", default=True)
+    parser.add_argument("--backfill", action="store_true")
     return parser.parse_args()
 
 
@@ -281,6 +401,8 @@ def main() -> None:
         index_code=args.index_code,
         overwrite=args.overwrite,
         dry_run=args.dry_run,
+        incremental=args.incremental,
+        backfill=args.backfill,
     )
     print(json.dumps(result, ensure_ascii=False, indent=2))
 

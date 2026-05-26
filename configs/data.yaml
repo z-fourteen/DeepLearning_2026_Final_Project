@@ -24,6 +24,7 @@ meta:
   file_registry: "meta/file_registry.parquet"
   data_versions: "meta/data_versions.parquet"
   schema_registry: "meta/schema_registry.yaml"
+  pool_registry: "meta/pool_registry.parquet"
 
 logs:
   audit_dir: "logs/audit"

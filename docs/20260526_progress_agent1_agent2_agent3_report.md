@@ -267,6 +267,30 @@ pool_closed_intervals: 193
 pool_unique_stocks: 259
 ```
 
+### 4.7 增量能力
+
+Agent 2 已补充增量注册表：
+
+```text
+meta/pool_registry.parquet
+```
+
+当前行为：
+
+```text
+默认增量模式：对比 file_registry 中 index_weight 指纹和 pool_registry 中已处理指纹
+无新增或变更：跳过重建
+显式 backfill：使用 --backfill --overwrite 重建全量 SCD2 股票池
+```
+
+验证结果：
+
+```text
+pool_registry_rows: 125
+index_codes: 399006.SZ
+默认增量运行：skipped=true, pool_changed_files=0
+```
+
 ## 5. Agent 3：市场状态层完成情况
 
 ### 5.1 职责定位
@@ -319,11 +343,32 @@ data/lake/raw/trade_cal/
 - `price_valid`：`open/high/low/close/pre_close` 非空且 `close > 0`。
 - `volume_valid`：`vol` 非空且 `vol > 0`。
 - `is_suspended`：当前实现中等价于 `volume_valid == false`。
-- `is_limit_up`：`pct_chg >= 9.8`。
-- `is_limit_down`：`pct_chg <= -9.8`。
+- `is_limit_up`：基于板块、日期、上市交易日、ST 状态和 `pre_close` 推导涨停价后判断。
+- `is_limit_down`：基于板块、日期、上市交易日、ST 状态和 `pre_close` 推导跌停价后判断。
 - `listed_days`：优先基于交易日历计算上市交易日天数；交易日历不可用时退化为自然日。
 - `is_tradable`：非 ST、非停牌、价格有效、成交量有效、上市天数满足阈值。
 - `state_version`：使用数据版本号，例如 `v20260526`。
+
+涨跌停规则已配置化，当前重点覆盖创业板：
+
+```text
+创业板 2020-08-24 前：普通股票 10%，ST/*ST 5%
+创业板 2020-08-24 起：普通股票 20%，ST/*ST 20%
+新股上市前 5 个交易日：不设涨跌幅限制
+```
+
+状态层新增规则解释字段：
+
+```text
+market_board
+listed_trading_days
+has_price_limit
+limit_ratio
+limit_up_price
+limit_down_price
+limit_rule_id
+limit_rule_reason
+```
 
 ### 5.5 当前状态层输出
 
@@ -345,6 +390,7 @@ st_filtered: 298231
 invalid_price_rows: 168
 suspended_rows: 0
 state_partitions: 2521
+limit_rule_coverage: PASS
 ```
 
 ### 5.6 Agent 3 审计
@@ -375,7 +421,9 @@ Agent 3 已完成全历史状态矩阵构建。当前仍需继续细化的是规
 
 ```text
 已完成：20160104 至 20260525 全历史状态层
-待强化：涨跌停规则细分、统一查询接口、训练区间覆盖校验接入 DAG
+已完成：创业板涨跌停规则细化和可扩展规则接口
+已完成：统一状态层查询接口
+待强化：训练区间覆盖校验接入 DAG
 ```
 
 ## 6. 当前数据资产总览
@@ -438,12 +486,12 @@ logs/audit/v20260526_state_audit.json
 - 已用 `index_weight` 构建创业板指历史动态成分股池。
 - 已使用 SCD Type 2 股票池区间，防止幸存者偏差。
 - 已建立全历史日度市场状态层，统一 ST、停牌、价格有效性、成交量有效性和可交易性判断。
+- 已细化创业板涨跌停规则，并为其它板块预留可配置扩展接口。
 - 已保留 `trade_date` 和 `ts_code`，便于后续特征、标签、训练集和回测统一关联。
 
 尚未完成的实验手册内容：
 
 - `metric`、`moneyflow`、`market` 等更多 raw 数据流接入。
-- 基于状态层的统一过滤查询接口。
 - 特征工程。
 - 标签构建。
 - 模型训练数据集。
@@ -454,42 +502,76 @@ logs/audit/v20260526_state_audit.json
 
 ### 8.1 Agent 2 增量能力仍需强化
 
-Agent 2 当前可以稳定生成确定性的 SCD2 表，但它仍是基于全部已登记 `index_weight` 快照构建。
+Agent 2 已完成第一版增量注册表能力，能够在无 `index_weight` 变更时跳过重建。
 
-后续可强化为：
+后续仍可继续强化为真正的局部区间更新：
 
 ```text
-默认只处理 file_registry 中新增或变更的 index_weight 文件；
-只有显式 --backfill 时才重建全量股票池。
+当前：检测到 index_weight 变化后仍重建确定性 SCD2 表
+下一步增强：只切开、闭合、追加受影响的 SCD2 区间
 ```
 
-### 8.2 状态层规则仍需细化
+### 8.2 状态层规则仍需继续扩展
 
-当前涨跌停规则使用 `pct_chg >= 9.8` 和 `pct_chg <= -9.8`。
+当前已完成创业板关键规则细化，但后续仍可继续扩展其它市场和特殊交易场景。
 
 后续可以进一步区分：
 
 - 主板。
-- 创业板。
 - ST 股票。
 - 注册制前后规则差异。
+- 科创板。
+- 北交所。
+- 退市整理期。
 
-### 8.3 状态层查询接口仍需补齐
+### 8.3 状态层查询接口已补齐
 
-虽然已经新增覆盖校验脚本，但后续 Data Mart 仍需要一个标准查询接口，统一按日期区间、版本号、股票池条件读取状态层。
+已经新增标准查询接口：
+
+```text
+pipelines/state/query.py
+scripts/query_market_state.py
+```
+
+该接口支持：
+
+```text
+按日期区间读取
+按 state_version 读取
+可交易过滤：--tradable-only
+价格有效过滤：--require-price-valid
+成交量有效过滤：--require-volume-valid
+指定股票代码过滤：--ts-code
+SCD2 股票池过滤：--pool-path
+默认执行状态层覆盖校验
+```
+
+已验证与 Agent 2 的创业板 SCD2 股票池联动：
+
+```text
+query_market_state.py
+  --data-version v20260526
+  --start-date 20260521
+  --end-date 20260525
+  --tradable-only
+  --pool-path data/lake/core/chinext_pool/chinext_pool_scd2.parquet
+
+rows: 300
+trade_dates: 3
+ts_codes: 100
+```
 
 ## 9. 下一阶段建议
 
-建议下一阶段完成 Agent 3 的查询接口和规则细化，然后进入 Agent 4。
+Agent 3 的查询接口和规则细化已完成，下一阶段可以进入 Agent 4 的前置数据准备。
 
 推荐顺序：
 
-1. 为状态层增加标准查询接口，服务 Agent 4。
-2. 细化涨跌停、停牌和上市天数规则。
-3. 将状态层覆盖校验接入 DAG。
-4. 接入 `metric`、`moneyflow`、`market` 等后续特征所需 raw 数据流。
-5. 开始 Agent 4：Data Mart Agent。
-6. 构建 `features_daily`、`labels` 和训练集。
+1. 将状态层覆盖校验接入 DAG。
+2. 接入 `metric`、`moneyflow`、`market` 等后续特征所需 raw 数据流。
+3. 开始 Agent 4：Data Mart Agent。
+4. 构建 `features_daily`、`labels` 和训练集。
+5. 后续按需要将 Agent 2 从“变更后确定性重建”升级为“局部 SCD2 区间更新”。
 
 当前系统已经具备两个关键防偏差基础：
 
