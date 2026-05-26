@@ -26,6 +26,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--skip-ingest", action="store_true")
     parser.add_argument("--skip-pool", action="store_true")
     parser.add_argument("--skip-state-build", action="store_true")
+    parser.add_argument("--skip-mart", action="store_true")
     return parser.parse_args()
 
 
@@ -58,6 +59,21 @@ def main() -> None:
             ],
         )
     )
+    if not args.skip_mart:
+        results.append(
+            run_step(
+                "build_mart",
+                [
+                    "scripts/run_build_mart.py",
+                    "--data-version",
+                    args.data_version,
+                    "--start-date",
+                    args.start_date,
+                    "--end-date",
+                    args.end_date,
+                ],
+            )
+        )
     print(json.dumps({"data_version": args.data_version, "dag_status": "PASS", "steps": results}, ensure_ascii=False, indent=2))
 
 
