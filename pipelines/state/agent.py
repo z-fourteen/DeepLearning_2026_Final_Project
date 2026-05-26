@@ -22,6 +22,14 @@ STATE_COLUMNS = [
     "is_limit_down",
     "is_tradable",
     "listed_days",
+    "listed_trading_days",
+    "market_board",
+    "has_price_limit",
+    "limit_ratio",
+    "limit_up_price",
+    "limit_down_price",
+    "limit_rule_id",
+    "limit_rule_reason",
     "volume_valid",
     "price_valid",
     "state_version",
@@ -154,11 +162,14 @@ def normalize_date(series: pd.Series) -> pd.Series:
 def load_basic(raw_dir: Path) -> pd.DataFrame:
     basic = read_parquet_files(dataset_files(raw_dir, "basic"))
     if basic.empty:
-        return pd.DataFrame(columns=["ts_code", "list_date"])
+        return pd.DataFrame(columns=["ts_code", "list_date", "market"])
     basic = basic.copy()
     basic["ts_code"] = basic["ts_code"].astype("string")
     basic["list_date"] = normalize_date(basic["list_date"])
-    return basic[["ts_code", "list_date"]].drop_duplicates("ts_code", keep="last")
+    if "market" not in basic.columns:
+        basic["market"] = pd.NA
+    basic["market"] = basic["market"].astype("string")
+    return basic[["ts_code", "list_date", "market"]].drop_duplicates("ts_code", keep="last")
 
 
 def load_trade_calendar(raw_dir: Path) -> pd.DataFrame:
@@ -223,12 +234,105 @@ def compute_listed_days(state: pd.DataFrame, trade_cal: pd.DataFrame) -> pd.Seri
     return days.fillna(0).clip(lower=0).astype("int64")
 
 
+def classify_market_board(state: pd.DataFrame, limit_config: dict[str, Any]) -> pd.Series:
+    result = pd.Series("unknown", index=state.index, dtype="string")
+    ts_code = state["ts_code"].astype("string")
+    market = state.get("market", pd.Series(pd.NA, index=state.index)).astype("string")
+    market_text = market.fillna("")
+
+    chinext_by_market = market_text.str.contains("创业|CYB|ChiNext", case=False, regex=True)
+    result.loc[chinext_by_market] = "chinext"
+
+    for board, rule in limit_config.get("boards", {}).items():
+        for pattern in rule.get("code_patterns", []):
+            result.loc[ts_code.str.match(pattern, na=False)] = board
+    return result
+
+
+def active_reform(board_config: dict[str, Any], trade_date: str) -> dict[str, Any]:
+    reforms = sorted(board_config.get("reforms", []), key=lambda item: item["effective_from"])
+    active = reforms[0] if reforms else {}
+    for reform in reforms:
+        if str(reform["effective_from"]) <= trade_date:
+            active = reform
+        else:
+            break
+    return active
+
+
+def round_to_tick(value: pd.Series, tick_size: float) -> pd.Series:
+    return (value / tick_size).round() * tick_size
+
+
+def apply_limit_rules(state: pd.DataFrame, config: dict[str, Any]) -> pd.DataFrame:
+    limit_config = config.get("state", {}).get("limit_rules", {})
+    tick_size = float(limit_config.get("tick_size", 0.01))
+    tolerance = float(limit_config.get("price_tolerance", 0.000001))
+    boards = limit_config.get("boards", {})
+
+    state = state.copy()
+    state["listed_trading_days"] = state["listed_days"].astype("int64")
+    state["market_board"] = classify_market_board(state, limit_config)
+    state["has_price_limit"] = True
+    state["limit_ratio"] = pd.NA
+    state["limit_rule_id"] = pd.NA
+    state["limit_rule_reason"] = pd.NA
+
+    for board, board_config in boards.items():
+        board_mask = state["market_board"].eq(board)
+        if not board_mask.any():
+            continue
+        board_dates = sorted(state.loc[board_mask, "trade_date"].astype(str).unique())
+        for current_date in board_dates:
+            date_mask = board_mask & state["trade_date"].astype(str).eq(current_date)
+            reform = active_reform(board_config, current_date)
+            normal_ratio = float(reform.get("normal_limit_ratio", 0.10))
+            st_ratio = float(reform.get("st_limit_ratio", normal_ratio))
+            ipo_no_limit_days = int(reform.get("ipo_no_limit_trading_days", 0))
+            no_limit_mask = date_mask & (state["listed_trading_days"] <= ipo_no_limit_days)
+            limited_mask = date_mask & ~no_limit_mask
+
+            state.loc[no_limit_mask, "has_price_limit"] = False
+            state.loc[no_limit_mask, "limit_ratio"] = pd.NA
+            state.loc[no_limit_mask, "limit_rule_id"] = f"{board}_{current_date}_ipo_no_limit"
+            state.loc[no_limit_mask, "limit_rule_reason"] = f"first_{ipo_no_limit_days}_trading_days_no_limit"
+
+            st_mask = limited_mask & state["is_st"]
+            normal_mask = limited_mask & ~state["is_st"]
+            state.loc[st_mask, "limit_ratio"] = st_ratio
+            state.loc[st_mask, "limit_rule_id"] = f"{board}_{reform.get('effective_from')}_st"
+            state.loc[st_mask, "limit_rule_reason"] = "risk_warning_limit"
+            state.loc[normal_mask, "limit_ratio"] = normal_ratio
+            state.loc[normal_mask, "limit_rule_id"] = f"{board}_{reform.get('effective_from')}_normal"
+            state.loc[normal_mask, "limit_rule_reason"] = "normal_limit"
+
+    unknown = state["limit_ratio"].isna() & state["has_price_limit"]
+    state.loc[unknown, "limit_ratio"] = 0.10
+    state.loc[unknown, "limit_rule_id"] = "unknown_default_normal"
+    state.loc[unknown, "limit_rule_reason"] = "fallback_default_limit"
+
+    ratio = pd.to_numeric(state["limit_ratio"], errors="coerce")
+    limited = state["has_price_limit"] & state["pre_close"].notna() & (state["pre_close"] > 0) & ratio.notna()
+    state["limit_up_price"] = pd.NA
+    state["limit_down_price"] = pd.NA
+    state.loc[limited, "limit_up_price"] = round_to_tick(state.loc[limited, "pre_close"] * (1 + ratio.loc[limited]), tick_size)
+    state.loc[limited, "limit_down_price"] = round_to_tick(state.loc[limited, "pre_close"] * (1 - ratio.loc[limited]), tick_size)
+
+    close = pd.to_numeric(state["close"], errors="coerce")
+    up_price = pd.to_numeric(state["limit_up_price"], errors="coerce")
+    down_price = pd.to_numeric(state["limit_down_price"], errors="coerce")
+    state["is_limit_up"] = (limited & close.notna() & up_price.notna() & (close >= up_price - tolerance)).astype(bool)
+    state["is_limit_down"] = (limited & close.notna() & down_price.notna() & (close <= down_price + tolerance)).astype(bool)
+    return state
+
+
 def build_state_for_date(
     raw_dir: Path,
     trade_date: str,
     data_version: str,
     basic: pd.DataFrame,
     trade_cal: pd.DataFrame,
+    config: dict[str, Any],
     created_at: str,
     min_listed_days: int,
 ) -> pd.DataFrame:
@@ -245,9 +349,8 @@ def build_state_for_date(
     state["price_valid"] = state[price_columns].notna().all(axis=1) & (state["close"] > 0)
     state["volume_valid"] = state["vol"].notna() & (state["vol"] > 0)
     state["is_suspended"] = (~state["volume_valid"]).astype(bool)
-    state["is_limit_up"] = (state["pct_chg"] >= 9.8).fillna(False).astype(bool)
-    state["is_limit_down"] = (state["pct_chg"] <= -9.8).fillna(False).astype(bool)
     state["listed_days"] = compute_listed_days(state, trade_cal)
+    state = apply_limit_rules(state, config)
     state["is_tradable"] = (
         (~state["is_st"])
         & (~state["is_suspended"])
@@ -271,10 +374,21 @@ def validate_state(state: pd.DataFrame) -> None:
         raise ValueError("is_tradable contains null values")
     if (state["listed_days"] < 0).any():
         raise ValueError("listed_days contains negative values")
+    if (state["listed_trading_days"] < 0).any():
+        raise ValueError("listed_trading_days contains negative values")
     if (state["is_tradable"] & ~state["price_valid"]).any():
         raise ValueError("price_valid=false rows cannot be tradable")
     if (state["is_tradable"] & ~state["volume_valid"]).any():
         raise ValueError("volume_valid=false rows cannot be tradable")
+    if ((~state["has_price_limit"]) & (state["is_limit_up"] | state["is_limit_down"])).any():
+        raise ValueError("Rows without price limits cannot be limit-up or limit-down")
+    limited = state["has_price_limit"] & state["price_valid"]
+    invalid_limit_price = limited & (
+        pd.to_numeric(state["limit_up_price"], errors="coerce").isna()
+        | pd.to_numeric(state["limit_down_price"], errors="coerce").isna()
+    )
+    if invalid_limit_price.any():
+        raise ValueError("Limited rows with valid prices must have limit_up_price and limit_down_price")
 
 
 def replace_date_partition(output_root: Path, trade_date: str, state: pd.DataFrame) -> None:
@@ -358,7 +472,16 @@ def run_market_state(
 
     totals = BuildSummary(0, 0, 0, 0, 0)
     for current_date in trade_dates:
-        state = build_state_for_date(raw_dir, current_date, data_version, basic, trade_cal, created_at, min_listed_days)
+        state = build_state_for_date(
+            raw_dir,
+            current_date,
+            data_version,
+            basic,
+            trade_cal,
+            config,
+            created_at,
+            min_listed_days,
+        )
         validate_state(state)
         if state.empty:
             continue

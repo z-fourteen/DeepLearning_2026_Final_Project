@@ -61,6 +61,14 @@ state:
       is_limit_down: boolean
       is_tradable: boolean
       listed_days: integer
+      listed_trading_days: integer
+      market_board: string
+      has_price_limit: boolean
+      limit_ratio: numeric
+      limit_up_price: numeric
+      limit_down_price: numeric
+      limit_rule_id: string
+      limit_rule_reason: string
       volume_valid: boolean
       price_valid: boolean
       state_version: string

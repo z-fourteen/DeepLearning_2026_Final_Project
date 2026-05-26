@@ -50,6 +50,57 @@ pool:
 state:
   output_dir: "data/lake/state/security_daily_state.parquet"
   min_listed_days: 0
+  limit_rules:
+    tick_size: 0.01
+    price_tolerance: 0.000001
+    boards:
+      chinext:
+        code_patterns: ["^30\\d{4}\\.SZ$"]
+        reforms:
+          - effective_from: "19000101"
+            normal_limit_ratio: 0.10
+            st_limit_ratio: 0.05
+            ipo_no_limit_trading_days: 0
+          - effective_from: "20200824"
+            normal_limit_ratio: 0.20
+            st_limit_ratio: 0.20
+            ipo_no_limit_trading_days: 5
+      sz_main:
+        code_patterns: ["^00\\d{4}\\.SZ$"]
+        reforms:
+          - effective_from: "19000101"
+            normal_limit_ratio: 0.10
+            st_limit_ratio: 0.05
+            ipo_no_limit_trading_days: 0
+          - effective_from: "20230410"
+            normal_limit_ratio: 0.10
+            st_limit_ratio: 0.05
+            ipo_no_limit_trading_days: 5
+      sh_main:
+        code_patterns: ["^60\\d{4}\\.SH$"]
+        reforms:
+          - effective_from: "19000101"
+            normal_limit_ratio: 0.10
+            st_limit_ratio: 0.05
+            ipo_no_limit_trading_days: 0
+          - effective_from: "20230410"
+            normal_limit_ratio: 0.10
+            st_limit_ratio: 0.05
+            ipo_no_limit_trading_days: 5
+      star:
+        code_patterns: ["^68\\d{4}\\.SH$"]
+        reforms:
+          - effective_from: "19000101"
+            normal_limit_ratio: 0.20
+            st_limit_ratio: 0.20
+            ipo_no_limit_trading_days: 5
+      unknown:
+        code_patterns: []
+        reforms:
+          - effective_from: "19000101"
+            normal_limit_ratio: 0.10
+            st_limit_ratio: 0.05
+            ipo_no_limit_trading_days: 0
   columns:
     trade_date: date_yyyymmdd
     ts_code: string
@@ -59,6 +110,14 @@ state:
     is_limit_down: boolean
     is_tradable: boolean
     listed_days: integer
+    listed_trading_days: integer
+    market_board: string
+    has_price_limit: boolean
+    limit_ratio: numeric
+    limit_up_price: numeric
+    limit_down_price: numeric
+    limit_rule_id: string
+    limit_rule_reason: string
     volume_valid: boolean
     price_valid: boolean
     state_version: string
