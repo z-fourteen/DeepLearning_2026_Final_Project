@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import time
+from concurrent.futures import ProcessPoolExecutor
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -23,6 +25,8 @@ class ValidationConfig:
     max_baseline_corr: float
     train_end_date: str | None = None
     eval_start_date: str | None = None
+    neutralized_jobs: int = 1
+    neutralized_chunk_size: int = 16
 
 
 STAGES = {
@@ -129,6 +133,12 @@ def read_csv_checkpoint(path: Path) -> pd.DataFrame | None:
 def write_csv_checkpoint(df: pd.DataFrame, path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     df.to_csv(path, index=False, encoding="utf-8-sig")
+
+
+def chunked(items: list[str], chunk_size: int) -> list[list[str]]:
+    if chunk_size <= 0:
+        raise ValueError("chunk_size must be positive.")
+    return [items[index : index + chunk_size] for index in range(0, len(items), chunk_size)]
 
 
 def frame_memory_mb(df: pd.DataFrame) -> float:
@@ -260,12 +270,12 @@ def add_neutralization_exposures(df: pd.DataFrame) -> pd.DataFrame:
     return result
 
 
-def build_neutralized_dataset(df: pd.DataFrame, features: list[str], label_column: str) -> pd.DataFrame:
-    source = add_neutralization_exposures(df[["trade_date", "ts_code", label_column, *features]].copy())
-    skip_features = {"lag1_log_circ_mv", "lag1_turnover_rate", "lag1_turnover_rate_f"}
-    neutral_features = [feature for feature in features if feature not in skip_features]
-    residual_columns = [f"{feature}__neutral" for feature in neutral_features]
+def compute_neutralized_residuals(source: pd.DataFrame, features: list[str]) -> pd.DataFrame:
+    residual_columns = [f"{feature}__neutral" for feature in features]
     residuals = pd.DataFrame(np.nan, index=source.index, columns=residual_columns, dtype="float64")
+
+    if not features:
+        return residuals
 
     exposure_columns = ["exposure_size", "exposure_liquidity"]
     for _, group in source.groupby("trade_date", sort=True):
@@ -273,7 +283,7 @@ def build_neutralized_dataset(df: pd.DataFrame, features: list[str], label_colum
         exposure_valid = exposures.notna().all(axis=1)
         if int(exposure_valid.sum()) <= len(exposure_columns) + 2:
             continue
-        for feature, residual_feature in zip(neutral_features, residual_columns, strict=True):
+        for feature, residual_feature in zip(features, residual_columns, strict=True):
             y = pd.to_numeric(group[feature], errors="coerce").replace([np.inf, -np.inf], np.nan)
             valid = exposure_valid & y.notna()
             if int(valid.sum()) <= len(exposure_columns) + 2 or y[valid].nunique() < 2:
@@ -286,6 +296,40 @@ def build_neutralized_dataset(df: pd.DataFrame, features: list[str], label_colum
             except np.linalg.LinAlgError:
                 continue
             residuals.loc[y.loc[valid].index, residual_feature] = y_values - x_values @ beta
+
+    return residuals
+
+
+def neutralized_chunk_worker(args: tuple[pd.DataFrame, list[str]]) -> pd.DataFrame:
+    source, features = args
+    return compute_neutralized_residuals(source, features)
+
+
+def build_neutralized_dataset(
+    df: pd.DataFrame,
+    features: list[str],
+    label_column: str,
+    neutralized_jobs: int = 1,
+    neutralized_chunk_size: int = 16,
+) -> pd.DataFrame:
+    source = add_neutralization_exposures(df[["trade_date", "ts_code", label_column, *features]].copy())
+    skip_features = {"lag1_log_circ_mv", "lag1_turnover_rate", "lag1_turnover_rate_f"}
+    neutral_features = [feature for feature in features if feature not in skip_features]
+    if not neutral_features:
+        return source[["trade_date", "ts_code", label_column]]
+
+    jobs = max(1, int(neutralized_jobs))
+    chunk_size = max(1, int(neutralized_chunk_size))
+    feature_chunks = chunked(neutral_features, chunk_size)
+    if jobs == 1 or len(feature_chunks) == 1:
+        residuals = compute_neutralized_residuals(source, neutral_features)
+    else:
+        worker_count = min(jobs, len(feature_chunks), os.cpu_count() or 1)
+        common_columns = ["trade_date", "exposure_size", "exposure_liquidity"]
+        tasks = [(source[common_columns + chunk].copy(), chunk) for chunk in feature_chunks]
+        with ProcessPoolExecutor(max_workers=worker_count) as executor:
+            residual_frames = list(executor.map(neutralized_chunk_worker, tasks))
+        residuals = pd.concat(residual_frames, axis=1)
 
     return pd.concat([source[["trade_date", "ts_code", label_column]], residuals], axis=1)
 
@@ -757,6 +801,8 @@ def run_factor_validation(
     skip_quantile: bool = False,
     stage: str = "all",
     resume: bool = False,
+    neutralized_jobs: int = 1,
+    neutralized_chunk_size: int = 16,
 ) -> dict[str, Any]:
     if stage not in STAGES:
         raise ValueError(f"Unsupported validation stage: {stage}")
@@ -772,6 +818,8 @@ def run_factor_validation(
         max_baseline_corr=max_baseline_corr,
         train_end_date=train_end_date,
         eval_start_date=eval_start_date,
+        neutralized_jobs=neutralized_jobs,
+        neutralized_chunk_size=neutralized_chunk_size,
     )
     df = read_dataset(project_root, config, validation_config.data_version)
     if validation_config.label_column not in df.columns:
@@ -970,7 +1018,13 @@ def run_factor_validation(
             neutralized_ic_table = pd.read_csv(paths["neutralized_ic"])
             profile_stage(output_dir, "neutralized", "resumed", started_at, df, features, [paths["neutralized_ic"]])
         else:
-            neutralized = build_neutralized_dataset(df, features, validation_config.label_column)
+            neutralized = build_neutralized_dataset(
+                df,
+                features,
+                validation_config.label_column,
+                neutralized_jobs=validation_config.neutralized_jobs,
+                neutralized_chunk_size=validation_config.neutralized_chunk_size,
+            )
             neutralized_features = [column for column in neutralized.columns if column.endswith("__neutral")]
             neutralized_ic_table = compute_ic_table(
                 neutralized,
@@ -1092,6 +1146,8 @@ def run_factor_validation(
         "extended_quantile_skipped": skip_extended_quantile,
         "stage": stage,
         "resume": resume,
+        "neutralized_jobs": validation_config.neutralized_jobs,
+        "neutralized_chunk_size": validation_config.neutralized_chunk_size,
         "baseline_features": recommended_features(recommendation_table, "baseline"),
         "advanced_features": recommended_features(recommendation_table, "advanced"),
         "dropped_features": recommended_features(recommendation_table, "drop"),
@@ -1122,6 +1178,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--skip-extended-quantile", action="store_true")
     parser.add_argument("--stage", choices=sorted(STAGES), default="all")
     parser.add_argument("--resume", action="store_true")
+    parser.add_argument("--neutralized-jobs", type=int, default=1)
+    parser.add_argument("--neutralized-chunk-size", type=int, default=16)
     return parser.parse_args()
 
 
@@ -1144,6 +1202,8 @@ def main() -> None:
         skip_extended_quantile=args.skip_extended_quantile,
         stage=args.stage,
         resume=args.resume,
+        neutralized_jobs=args.neutralized_jobs,
+        neutralized_chunk_size=args.neutralized_chunk_size,
     )
     print(json.dumps(result, ensure_ascii=False, indent=2))
 
