@@ -53,6 +53,56 @@ def _safe_corr(group: pd.DataFrame, pred_col: str, target_col: str, min_count: i
     return float(pred.corr(target, method="pearson"))
 
 
+def _daily_cross_section_diagnostics(frame: pd.DataFrame, min_count: int) -> dict[str, int | str]:
+    if frame.empty:
+        return {
+            "valid_sample_count": 0,
+            "valid_date_count": 0,
+            "eligible_daily_count": 0,
+            "pred_constant_daily_count": 0,
+            "target_constant_daily_count": 0,
+            "daily_status": "no_valid_samples",
+            "daily_skip_reason": "No finite prediction/target pairs are available.",
+        }
+
+    grouped = frame.groupby("trade_date", sort=True)
+    eligible_daily_count = 0
+    pred_constant_daily_count = 0
+    target_constant_daily_count = 0
+
+    for _, group in grouped:
+        if len(group) < min_count:
+            continue
+        eligible_daily_count += 1
+        if group["pred"].nunique(dropna=True) <= 1:
+            pred_constant_daily_count += 1
+        if group["target"].nunique(dropna=True) <= 1:
+            target_constant_daily_count += 1
+
+    if eligible_daily_count == 0:
+        status = "no_valid_daily_cross_section"
+        reason = f"No trade date has at least min_count={min_count} finite samples."
+    elif pred_constant_daily_count == eligible_daily_count:
+        status = "prediction_collapse"
+        reason = "All eligible trade dates have constant predictions, so IC/RankIC is undefined."
+    elif target_constant_daily_count == eligible_daily_count:
+        status = "target_collapse"
+        reason = "All eligible trade dates have constant targets, so IC/RankIC is undefined."
+    else:
+        status = "ok"
+        reason = ""
+
+    return {
+        "valid_sample_count": int(len(frame)),
+        "valid_date_count": int(frame["trade_date"].nunique(dropna=True)),
+        "eligible_daily_count": int(eligible_daily_count),
+        "pred_constant_daily_count": int(pred_constant_daily_count),
+        "target_constant_daily_count": int(target_constant_daily_count),
+        "daily_status": status,
+        "daily_skip_reason": reason,
+    }
+
+
 def compute_daily_ic(
     pred: Sequence[float] | np.ndarray | torch.Tensor,
     target: Sequence[float] | np.ndarray | torch.Tensor,
@@ -116,9 +166,20 @@ def summarize_daily_ic(
     target: Sequence[float] | np.ndarray | torch.Tensor,
     dates: Sequence[str] | np.ndarray,
     min_count: int = 20,
-) -> dict[str, float | int]:
+) -> dict[str, float | int | str]:
+    frame = _metrics_frame(pred, target, dates)
     daily_ic = compute_daily_ic(pred, target, dates, min_count=min_count)
     daily_rank_ic = compute_daily_rank_ic(pred, target, dates, min_count=min_count)
+    diagnostics = _daily_cross_section_diagnostics(frame, min_count=min_count)
+    if len(daily_ic):
+        diagnostics["daily_status"] = "ok"
+        diagnostics["daily_skip_reason"] = ""
+    elif diagnostics["daily_status"] == "ok":
+        diagnostics["daily_status"] = "no_valid_daily_correlation"
+        diagnostics["daily_skip_reason"] = (
+            "Eligible daily cross-sections exist, but all IC values are undefined after correlation checks."
+        )
+
     return {
         "daily_count": int(len(daily_ic)),
         "rank_daily_count": int(len(daily_rank_ic)),
@@ -128,4 +189,5 @@ def summarize_daily_ic(
         "rank_ic_mean": float(daily_rank_ic.mean()) if len(daily_rank_ic) else float("nan"),
         "rank_ic_std": float(daily_rank_ic.std(ddof=1)) if len(daily_rank_ic) > 1 else float("nan"),
         "rank_icir": compute_icir(daily_rank_ic),
+        **diagnostics,
     }

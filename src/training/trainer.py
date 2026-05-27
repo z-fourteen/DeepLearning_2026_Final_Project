@@ -50,7 +50,7 @@ class Trainer:
         self.early_stop_metric = str(self.config.get("early_stop_metric", "rank_ic_mean"))
         self.early_stop_patience = int(self.config.get("early_stop_patience", 10))
         self.min_daily_count = int(self.config.get("min_daily_count", 20))
-        self.history: list[dict[str, float | int]] = []
+        self.history: list[dict[str, float | int | str]] = []
         self.best_metric = float("-inf")
         self.best_state_dict: dict[str, torch.Tensor] | None = None
         self.best_epoch = -1
@@ -79,7 +79,7 @@ class Trainer:
         return {"train_loss": total_loss / max(total_samples, 1)}
 
     @torch.no_grad()
-    def validate(self) -> dict[str, float | int]:
+    def validate(self) -> dict[str, float | int | str]:
         self.model.eval()
         total_loss = 0.0
         total_samples = 0
@@ -112,7 +112,7 @@ class Trainer:
         metrics.update(self._prediction_diagnostics(pred_tensor, target_tensor))
         return metrics
 
-    def fit(self, max_epochs: int, checkpoint_path: str | Path | None = None) -> list[dict[str, float | int]]:
+    def fit(self, max_epochs: int, checkpoint_path: str | Path | None = None) -> list[dict[str, float | int | str]]:
         stale_epochs = 0
 
         for epoch in range(1, max_epochs + 1):
@@ -121,7 +121,7 @@ class Trainer:
             if self.scheduler is not None:
                 self.scheduler.step()
 
-            record: dict[str, float | int] = {"epoch": epoch, **train_metrics, **val_metrics}
+            record: dict[str, float | int | str] = {"epoch": epoch, **train_metrics, **val_metrics}
             self.history.append(record)
 
             current = float(record.get(self.early_stop_metric, float("nan")))
