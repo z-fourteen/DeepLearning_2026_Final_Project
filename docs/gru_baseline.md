@@ -52,6 +52,22 @@
 - Minimum best-checkpoint daily coverage: 0.8
 - Collapse stop patience: 2
 
+## Stable Variant
+- Config: `configs/sequence_gru_baseline_stable.yaml`
+- Purpose: conservative stability check on top of the current date-aware MSE+IC baseline.
+- It keeps the same data interface, GRU architecture, date-aware batch mode, and `mse_ic` objective.
+- Conservative changes:
+  - Learning rate: 0.0003 -> 0.0001
+  - Weight decay: 0.00001 -> 0.000001
+  - `ic_loss_alpha`: 0.2 -> 0.1
+  - Input dropout: 0.1 -> 0.05
+  - GRU dropout: 0.2 -> 0.1
+  - Head dropout: 0.3 -> 0.1
+  - Max grad norm: 1.0 -> 0.5
+  - Early-stop patience: 10 -> 12
+  - Minimum best-checkpoint daily coverage: 0.8 -> 0.9
+- Output directory: `outputs/runs/gru_l20_date_aware_mse_ic_baseline_stable/`
+
 ## Reference Result
 - Best epoch: 13
 - Best validation RankIC mean: 0.0299640
@@ -91,6 +107,12 @@ This is the current GRU baseline. It replaces the earlier pure-regression E01 an
 ```bash
 conda activate dl_env
 python scripts/train_sequence.py --config configs/sequence_gru_baseline.yaml --device cuda
+```
+
+Stable run:
+```bash
+conda activate dl_env
+python scripts/train_sequence.py --config configs/sequence_gru_baseline_stable.yaml --device cuda
 ```
 
 ## Next Actions
