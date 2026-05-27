@@ -72,7 +72,7 @@ class Trainer:
 
             self.optimizer.zero_grad(set_to_none=True)
             pred = self.model(x).view(-1)
-            loss = self.loss_fn(pred, y)
+            loss = self._compute_loss(pred, y, batch)
             loss.backward()
             if self.max_grad_norm > 0:
                 clip_grad_norm_(self.model.parameters(), self.max_grad_norm)
@@ -97,7 +97,7 @@ class Trainer:
             x = batch["x"].to(self.device, non_blocking=True)
             y = batch["y"].to(self.device, non_blocking=True).view(-1)
             pred = self.model(x).view(-1)
-            loss = self.loss_fn(pred, y)
+            loss = self._compute_loss(pred, y, batch)
 
             batch_size = int(y.numel())
             total_loss += float(loss.detach().cpu()) * batch_size
@@ -172,6 +172,17 @@ class Trainer:
         if self.best_state_dict is not None:
             self.model.load_state_dict(self.best_state_dict)
         return self.history
+
+    def _compute_loss(
+        self,
+        pred: torch.Tensor,
+        target: torch.Tensor,
+        batch: Mapping[str, Any],
+    ) -> torch.Tensor:
+        try:
+            return self.loss_fn(pred, target, batch.get("trade_date"))
+        except TypeError:
+            return self.loss_fn(pred, target)
 
     def _prediction_diagnostics(
         self,

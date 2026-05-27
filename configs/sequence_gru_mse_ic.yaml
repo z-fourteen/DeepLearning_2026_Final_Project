@@ -27,6 +27,7 @@ model:
 training:
   device: "auto"
   batch_size: 256
+  batch_mode: "date"
   max_epochs: 80
   optimizer: "adamw"
   learning_rate: 0.0003

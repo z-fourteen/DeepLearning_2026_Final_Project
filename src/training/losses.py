@@ -4,6 +4,12 @@ import torch
 from torch import nn
 
 
+def _as_date_key(value: object) -> str:
+    if isinstance(value, bytes):
+        return value.decode("utf-8")
+    return str(value)
+
+
 class PearsonICLoss(nn.Module):
     """Negative Pearson correlation loss for 1D prediction targets."""
 
@@ -49,9 +55,36 @@ class MSEICLoss(nn.Module):
         self.mse = nn.MSELoss()
         self.ic = PearsonICLoss(eps=eps, min_samples=min_samples)
 
-    def forward(self, pred: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
+    def forward(
+        self,
+        pred: torch.Tensor,
+        target: torch.Tensor,
+        trade_date: list[str] | tuple[str, ...] | None = None,
+    ) -> torch.Tensor:
         pred = pred.view(-1)
         target = target.view(-1)
         mse_loss = self.mse(pred, target)
-        ic_loss = self.ic(pred, target)
+        ic_loss = self._daily_ic_loss(pred, target, trade_date) if trade_date is not None else self.ic(pred, target)
         return (1.0 - self.alpha) * mse_loss + self.alpha * ic_loss
+
+    def _daily_ic_loss(
+        self,
+        pred: torch.Tensor,
+        target: torch.Tensor,
+        trade_date: list[str] | tuple[str, ...],
+    ) -> torch.Tensor:
+        if len(trade_date) != pred.numel():
+            raise ValueError(
+                f"trade_date length ({len(trade_date)}) must match prediction length ({pred.numel()})"
+            )
+
+        losses: list[torch.Tensor] = []
+        date_keys = [_as_date_key(item) for item in trade_date]
+        for date in sorted(set(date_keys)):
+            mask = pred.new_tensor([key == date for key in date_keys], dtype=torch.bool)
+            if int(mask.sum().item()) >= self.ic.min_samples:
+                losses.append(self.ic(pred[mask], target[mask]))
+
+        if not losses:
+            return pred.new_tensor(0.0)
+        return torch.stack(losses).mean()

@@ -19,7 +19,7 @@ from torch.utils.data import DataLoader
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from src.data import SequenceNPZDataset  # noqa: E402
+from src.data import DateBatchSampler, SequenceNPZDataset  # noqa: E402
 from src.models import GRUStockModel  # noqa: E402
 from src.training import MSEICLoss, PearsonICLoss, Trainer, resolve_device  # noqa: E402
 
@@ -93,7 +93,24 @@ def build_dataloader(
     shuffle: bool,
     num_workers: int,
     pin_memory: bool,
+    batch_mode: str = "sample",
+    seed: int = 42,
 ) -> DataLoader:
+    if batch_mode == "date":
+        sampler = DateBatchSampler(
+            dataset,
+            max_samples_per_batch=batch_size,
+            shuffle=shuffle,
+            seed=seed,
+        )
+        return DataLoader(
+            dataset,
+            batch_sampler=sampler,
+            num_workers=num_workers,
+            pin_memory=pin_memory,
+        )
+    if batch_mode != "sample":
+        raise ValueError(f"Unsupported batch_mode: {batch_mode}")
     return DataLoader(
         dataset,
         batch_size=batch_size,
@@ -186,13 +203,14 @@ def main() -> None:
     test_dataset = SequenceNPZDataset(npz_path, str(data_config.get("test_split", "test")))
 
     batch_size = int(training_config.get("batch_size", 256))
+    batch_mode = str(training_config.get("batch_mode", "sample")).lower()
     num_workers = int(data_config.get("num_workers", 0))
     device = resolve_device(args.device or training_config.get("device", "auto"))
     pin_memory = bool(data_config.get("pin_memory", True)) and device.type == "cuda"
 
-    train_loader = build_dataloader(train_dataset, batch_size, True, num_workers, pin_memory)
-    val_loader = build_dataloader(val_dataset, batch_size, False, num_workers, pin_memory)
-    test_loader = build_dataloader(test_dataset, batch_size, False, num_workers, pin_memory)
+    train_loader = build_dataloader(train_dataset, batch_size, True, num_workers, pin_memory, batch_mode, seed)
+    val_loader = build_dataloader(val_dataset, batch_size, False, num_workers, pin_memory, "sample", seed)
+    test_loader = build_dataloader(test_dataset, batch_size, False, num_workers, pin_memory, "sample", seed)
 
     model_name = str(model_config.get("name", "gru_baseline"))
     if model_name != "gru_baseline":
@@ -219,6 +237,7 @@ def main() -> None:
         "lookback": train_dataset.lookback,
         "num_features": train_dataset.num_features,
         "batch_size": batch_size,
+        "batch_mode": batch_mode,
         "train_steps_per_epoch": len(train_loader),
         "validation_steps_per_epoch": len(val_loader),
         "test_steps": len(test_loader),
