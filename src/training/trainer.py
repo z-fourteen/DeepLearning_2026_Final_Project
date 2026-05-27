@@ -55,6 +55,7 @@ class Trainer:
             collapse_statuses = [collapse_statuses]
         self.collapse_stop_statuses = {str(status) for status in collapse_statuses}
         self.min_daily_count = int(self.config.get("min_daily_count", 20))
+        self.min_best_daily_ratio = float(self.config.get("min_best_daily_ratio", 0.8))
         self.history: list[dict[str, float | int | str]] = []
         self.best_metric = float("-inf")
         self.best_state_dict: dict[str, torch.Tensor] | None = None
@@ -132,7 +133,15 @@ class Trainer:
             self.history.append(record)
 
             current = float(record.get(self.early_stop_metric, float("nan")))
-            if math.isfinite(current) and current > self.best_metric:
+            daily_coverage_ratio = self._daily_coverage_ratio(record)
+            checkpoint_eligible = (
+                math.isfinite(current)
+                and daily_coverage_ratio >= self.min_best_daily_ratio
+            )
+            record["daily_coverage_ratio"] = daily_coverage_ratio
+            record["checkpoint_eligible"] = int(checkpoint_eligible)
+
+            if checkpoint_eligible and current > self.best_metric:
                 self.best_metric = current
                 self.best_epoch = epoch
                 self.best_state_dict = copy.deepcopy(self.model.state_dict())
@@ -172,6 +181,13 @@ class Trainer:
         if self.best_state_dict is not None:
             self.model.load_state_dict(self.best_state_dict)
         return self.history
+
+    def _daily_coverage_ratio(self, record: Mapping[str, Any]) -> float:
+        daily_count = int(record.get("daily_count", 0) or 0)
+        eligible_daily_count = int(record.get("eligible_daily_count", 0) or 0)
+        if eligible_daily_count <= 0:
+            return 0.0
+        return float(daily_count / eligible_daily_count)
 
     def _compute_loss(
         self,

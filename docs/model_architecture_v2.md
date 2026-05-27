@@ -545,7 +545,7 @@ scripts/
   train_sequence.py                # 序列模型统一训练入口，训练闭环阶段创建
 
 configs/
-  sequence_gru_baseline.yaml       # GRU lookback=20 主 baseline
+  sequence_gru_baseline.yaml       # GRU lookback=20 date-aware MSE+IC baseline
   sequence_gru_l60.yaml            # GRU lookback=60 对比
   sequence_transformer.yaml        # Transformer lookback=20
 ```

@@ -1,6 +1,6 @@
 run:
-  name: "e01_gru_l20_baseline"
-  output_dir: "outputs/runs/e01_gru_l20_baseline"
+  name: "gru_l20_date_aware_mse_ic_baseline"
+  output_dir: "outputs/runs/gru_l20_date_aware_mse_ic_baseline"
   seed: 42
 
 data:
@@ -27,16 +27,20 @@ model:
 training:
   device: "auto"
   batch_size: 256
+  batch_mode: "date"
   max_epochs: 80
   optimizer: "adamw"
-  learning_rate: 0.001
-  weight_decay: 0.0001
-  loss_fn: "huber"
-  huber_delta: 1.0
+  learning_rate: 0.0003
+  weight_decay: 0.00001
+  loss_fn: "mse_ic"
+  ic_loss_alpha: 0.2
+  ic_loss_eps: 0.000001
+  ic_loss_min_samples: 20
   max_grad_norm: 1.0
   scheduler: "cosine"
   early_stop_metric: "rank_ic_mean"
   early_stop_patience: 10
+  min_best_daily_ratio: 0.8
   collapse_stop_patience: 2
   collapse_stop_statuses:
     - "prediction_collapse"
