@@ -260,37 +260,34 @@ def add_neutralization_exposures(df: pd.DataFrame) -> pd.DataFrame:
     return result
 
 
-def neutralize_feature(group: pd.DataFrame, feature: str, exposure_columns: list[str]) -> pd.Series:
-    columns = [feature, *exposure_columns]
-    data = group[columns].apply(pd.to_numeric, errors="coerce").replace([np.inf, -np.inf], np.nan)
-    valid = data.dropna()
-    residual = pd.Series(np.nan, index=group.index, dtype="float64")
-    if valid.shape[0] <= len(exposure_columns) + 2 or valid[feature].nunique() < 2:
-        return residual
-    y = valid[feature].to_numpy(dtype="float64")
-    x = valid[exposure_columns].to_numpy(dtype="float64")
-    x = np.column_stack([np.ones(len(x)), x])
-    try:
-        beta = np.linalg.lstsq(x, y, rcond=None)[0]
-    except np.linalg.LinAlgError:
-        return residual
-    residual.loc[valid.index] = y - x @ beta
-    return residual
-
-
 def build_neutralized_dataset(df: pd.DataFrame, features: list[str], label_column: str) -> pd.DataFrame:
-    result = add_neutralization_exposures(df[["trade_date", "ts_code", label_column, *features]].copy())
-    residual_features: list[str] = []
-    for feature in features:
-        if feature in {"lag1_log_circ_mv", "lag1_turnover_rate", "lag1_turnover_rate_f"}:
+    source = add_neutralization_exposures(df[["trade_date", "ts_code", label_column, *features]].copy())
+    skip_features = {"lag1_log_circ_mv", "lag1_turnover_rate", "lag1_turnover_rate_f"}
+    neutral_features = [feature for feature in features if feature not in skip_features]
+    residual_columns = [f"{feature}__neutral" for feature in neutral_features]
+    residuals = pd.DataFrame(np.nan, index=source.index, columns=residual_columns, dtype="float64")
+
+    exposure_columns = ["exposure_size", "exposure_liquidity"]
+    for _, group in source.groupby("trade_date", sort=True):
+        exposures = group[exposure_columns].apply(pd.to_numeric, errors="coerce").replace([np.inf, -np.inf], np.nan)
+        exposure_valid = exposures.notna().all(axis=1)
+        if int(exposure_valid.sum()) <= len(exposure_columns) + 2:
             continue
-        residual_feature = f"{feature}__neutral"
-        neutralize_columns = [feature, "exposure_size", "exposure_liquidity"]
-        result[residual_feature] = result.groupby("trade_date", group_keys=False)[neutralize_columns].apply(
-            lambda g: neutralize_feature(g, feature, ["exposure_size", "exposure_liquidity"])
-        )
-        residual_features.append(residual_feature)
-    return result[["trade_date", "ts_code", label_column, *residual_features]]
+        for feature, residual_feature in zip(neutral_features, residual_columns, strict=True):
+            y = pd.to_numeric(group[feature], errors="coerce").replace([np.inf, -np.inf], np.nan)
+            valid = exposure_valid & y.notna()
+            if int(valid.sum()) <= len(exposure_columns) + 2 or y[valid].nunique() < 2:
+                continue
+            x_values = exposures.loc[valid, exposure_columns].to_numpy(dtype="float64")
+            x_values = np.column_stack([np.ones(len(x_values)), x_values])
+            y_values = y.loc[valid].to_numpy(dtype="float64")
+            try:
+                beta = np.linalg.lstsq(x_values, y_values, rcond=None)[0]
+            except np.linalg.LinAlgError:
+                continue
+            residuals.loc[y.loc[valid].index, residual_feature] = y_values - x_values @ beta
+
+    return pd.concat([source[["trade_date", "ts_code", label_column]], residuals], axis=1)
 
 
 def _pearson_ic(group: pd.DataFrame, feature: str, label_column: str, method: str) -> float:
@@ -378,15 +375,21 @@ def compute_ic_table(df: pd.DataFrame, features: list[str], label_column: str, m
     return summarize_ic_table(compute_daily_ic_table(df, features, label_column, min_cross_section), features)
 
 
-def _assign_quantile(values: pd.Series, quantiles: int) -> pd.Series:
-    valid = values.replace([np.inf, -np.inf], np.nan).dropna()
-    result = pd.Series(np.nan, index=values.index, dtype="float64")
-    if valid.nunique() < 2 or len(valid) < quantiles:
-        return result
-    try:
-        result.loc[valid.index] = pd.qcut(valid.rank(method="first"), quantiles, labels=False) + 1
-    except ValueError:
-        return result
+def assign_group_quantiles(working: pd.DataFrame, feature: str, quantiles: int, min_cross_section: int) -> pd.DataFrame:
+    working = working.replace([np.inf, -np.inf], np.nan).dropna(subset=[feature])
+    if working.empty:
+        return working.assign(quantile=pd.Series(dtype="float64"))
+    grouped = working.groupby("trade_date", sort=False)[feature]
+    counts = grouped.transform("size")
+    unique_counts = grouped.transform("nunique")
+    valid = (counts >= max(quantiles, min_cross_section)) & (unique_counts >= 2)
+    if not bool(valid.any()):
+        return working.iloc[0:0].assign(quantile=pd.Series(dtype="float64"))
+
+    ranked = grouped.rank(method="first")
+    bucket = np.floor((ranked - 1) * quantiles / counts) + 1
+    result = working.loc[valid].copy()
+    result["quantile"] = bucket.loc[valid].clip(1, quantiles).astype("float64")
     return result
 
 
@@ -398,20 +401,13 @@ def compute_quantile_table(
     min_cross_section: int,
 ) -> pd.DataFrame:
     records: list[dict[str, Any]] = []
+    base = df[["trade_date", label_column, *features]].copy()
+    base[label_column] = pd.to_numeric(base[label_column], errors="coerce")
+    base = base.replace([np.inf, -np.inf], np.nan).dropna(subset=[label_column])
     for feature in features:
-        working = df[["trade_date", feature, label_column]].copy()
+        working = base[["trade_date", feature, label_column]].copy()
         working[feature] = pd.to_numeric(working[feature], errors="coerce")
-        working[label_column] = pd.to_numeric(working[label_column], errors="coerce")
-        working = working.replace([np.inf, -np.inf], np.nan).dropna()
-        if working.empty:
-            continue
-        working["quantile"] = working.groupby("trade_date", group_keys=False)[feature].transform(
-            lambda s: _assign_quantile(s, quantiles)
-        )
-        working = working.dropna(subset=["quantile"])
-        day_sizes = working.groupby("trade_date").size()
-        valid_dates = day_sizes[day_sizes >= min_cross_section].index
-        working = working[working["trade_date"].isin(valid_dates)]
+        working = assign_group_quantiles(working, feature, quantiles, min_cross_section)
         if working.empty:
             continue
         daily = working.groupby(["trade_date", "quantile"], as_index=False)[label_column].mean()
@@ -452,20 +448,13 @@ def compute_quantile_detail_table(
     min_cross_section: int,
 ) -> pd.DataFrame:
     records: list[dict[str, Any]] = []
+    base = df[["trade_date", label_column, *features]].copy()
+    base[label_column] = pd.to_numeric(base[label_column], errors="coerce")
+    base = base.replace([np.inf, -np.inf], np.nan).dropna(subset=[label_column])
     for feature in features:
-        working = df[["trade_date", feature, label_column]].copy()
+        working = base[["trade_date", feature, label_column]].copy()
         working[feature] = pd.to_numeric(working[feature], errors="coerce")
-        working[label_column] = pd.to_numeric(working[label_column], errors="coerce")
-        working = working.replace([np.inf, -np.inf], np.nan).dropna()
-        if working.empty:
-            continue
-        working["quantile"] = working.groupby("trade_date", group_keys=False)[feature].transform(
-            lambda s: _assign_quantile(s, quantiles)
-        )
-        working = working.dropna(subset=["quantile"])
-        day_sizes = working.groupby("trade_date").size()
-        valid_dates = day_sizes[day_sizes >= min_cross_section].index
-        working = working[working["trade_date"].isin(valid_dates)]
+        working = assign_group_quantiles(working, feature, quantiles, min_cross_section)
         if working.empty:
             continue
         working["feature"] = feature
