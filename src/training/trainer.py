@@ -49,11 +49,17 @@ class Trainer:
         self.max_grad_norm = float(self.config.get("max_grad_norm", 1.0))
         self.early_stop_metric = str(self.config.get("early_stop_metric", "rank_ic_mean"))
         self.early_stop_patience = int(self.config.get("early_stop_patience", 10))
+        self.collapse_stop_patience = int(self.config.get("collapse_stop_patience", 2))
+        collapse_statuses = self.config.get("collapse_stop_statuses", ["prediction_collapse"])
+        if isinstance(collapse_statuses, str):
+            collapse_statuses = [collapse_statuses]
+        self.collapse_stop_statuses = {str(status) for status in collapse_statuses}
         self.min_daily_count = int(self.config.get("min_daily_count", 20))
         self.history: list[dict[str, float | int | str]] = []
         self.best_metric = float("-inf")
         self.best_state_dict: dict[str, torch.Tensor] | None = None
         self.best_epoch = -1
+        self.stop_reason = "max_epochs_reached"
 
     def train_epoch(self) -> dict[str, float]:
         self.model.train()
@@ -114,6 +120,7 @@ class Trainer:
 
     def fit(self, max_epochs: int, checkpoint_path: str | Path | None = None) -> list[dict[str, float | int | str]]:
         stale_epochs = 0
+        collapse_epochs = 0
 
         for epoch in range(1, max_epochs + 1):
             train_metrics = self.train_epoch()
@@ -145,7 +152,21 @@ class Trainer:
             else:
                 stale_epochs += 1
 
+            daily_status = str(record.get("daily_status", ""))
+            if daily_status in self.collapse_stop_statuses:
+                collapse_epochs += 1
+            else:
+                collapse_epochs = 0
+
+            record["stale_epochs"] = stale_epochs
+            record["collapse_epochs"] = collapse_epochs
+
+            if self.collapse_stop_patience > 0 and collapse_epochs >= self.collapse_stop_patience:
+                self.stop_reason = f"collapse_early_stop:{daily_status}"
+                break
+
             if stale_epochs >= self.early_stop_patience:
+                self.stop_reason = f"metric_early_stop:{self.early_stop_metric}"
                 break
 
         if self.best_state_dict is not None:

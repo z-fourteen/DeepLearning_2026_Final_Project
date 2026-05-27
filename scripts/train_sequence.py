@@ -21,7 +21,7 @@ sys.path.insert(0, str(PROJECT_ROOT))
 
 from src.data import SequenceNPZDataset  # noqa: E402
 from src.models import GRUStockModel  # noqa: E402
-from src.training import Trainer, resolve_device  # noqa: E402
+from src.training import MSEICLoss, PearsonICLoss, Trainer, resolve_device  # noqa: E402
 
 
 def load_yaml(path: Path) -> dict[str, Any]:
@@ -49,6 +49,17 @@ def build_loss(config: dict[str, Any]) -> torch.nn.Module:
         return torch.nn.HuberLoss(delta=float(config.get("huber_delta", 1.0)))
     if loss_name == "mse":
         return torch.nn.MSELoss()
+    if loss_name == "pearson_ic":
+        return PearsonICLoss(
+            eps=float(config.get("ic_loss_eps", 1e-8)),
+            min_samples=int(config.get("ic_loss_min_samples", 2)),
+        )
+    if loss_name in {"mse_ic", "mse_pearson_ic"}:
+        return MSEICLoss(
+            alpha=float(config.get("ic_loss_alpha", 0.1)),
+            eps=float(config.get("ic_loss_eps", 1e-8)),
+            min_samples=int(config.get("ic_loss_min_samples", 2)),
+        )
     raise ValueError(f"Unsupported loss_fn: {loss_name}")
 
 
@@ -251,6 +262,7 @@ def main() -> None:
     metrics = {
         "best_epoch": trainer.best_epoch,
         "best_metric": trainer.best_metric,
+        "stop_reason": trainer.stop_reason,
         "history": history,
         "summary": summary,
         "prediction_rows": int(len(predictions)),
