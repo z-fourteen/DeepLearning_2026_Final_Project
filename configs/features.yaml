@@ -91,6 +91,118 @@ feature_sets:
       - lag1_main_mf_strength
       - lag1_large_order_imbalance
       - lag1_close_position
+  baseline_lightgbm_fixed:
+    source: "train_period_validation_20160104_20221231"
+    include_prefixes: ["lag1_"]
+    exclude_raw_same_day: true
+    selected_features:
+      - lag1_turnover_20d_std
+      - lag1_turnover_60d_std
+      - lag1_turnover_cost_proxy
+      - lag1_turnover_5d_std
+      - lag1_ret_60d_std
+      - lag1_ret_5d_mean
+      - lag1_industry_neutral_ret_20d
+      - lag1_amount_log
+      - lag1_amount_rank_pct
+      - lag1_ret_20d_std
+      - lag1_ret_10d_mean
+      - lag1_excess_ret_10d_mean
+      - lag1_vol_log
+      - lag1_excess_ret_20d_mean
+      - lag1_ret_10d_std
+      - lag1_industry_turnover_rank
+      - lag1_amplitude
+      - lag1_amount_60d_mean
+      - lag1_intraday_return
+      - lag1_log_circ_mv
+      - lag1_excess_ret_1d
+      - lag1_ret_5d_std
+      - lag1_industry_neutral_ret_1d
+      - lag1_industry_amount_rank
+      - lag1_pb_winsor
+      - lag1_illiquidity_proxy
+      - lag1_net_mf_strength_60d_mean
+      - lag1_net_mf_strength_20d_mean
+      - lag1_listed_trading_days
+      - lag1_lower_shadow_ratio
+      - lag1_close_position
+      - lag1_max_drawdown_20d
+      - lag1_industry_ret_1d_mean
+      - lag1_volume_ratio
+      - lag1_industry_pb_rank
+      - lag1_industry_mv_rank
+      - lag1_net_mf_amount_to_amount
+      - lag1_turnover_acceleration
+      - lag1_industry_net_mf_strength_rank
+      - lag1_net_mf_strength_5d_mean
+  advanced_sequence_fixed:
+    source: "train_period_validation_20160104_20221231"
+    include_prefixes: ["lag1_"]
+    sequence_windows: [20, 60]
+    selected_features:
+      - lag1_turnover_20d_std
+      - lag1_turnover_60d_std
+      - lag1_turnover_cost_proxy
+      - lag1_turnover_20d_mean
+      - lag1_turnover_rate
+      - lag1_turnover_10d_mean
+      - lag1_turnover_rate_f
+      - lag1_turnover_5d_mean
+      - lag1_turnover_10d_std
+      - lag1_turnover_60d_mean
+      - lag1_ret_60d_std
+      - lag1_ret_5d_mean
+      - lag1_ret_5d
+      - lag1_ret_20d_std
+      - lag1_ret_20d
+      - lag1_ret_1d
+      - lag1_excess_ret_1d
+      - lag1_excess_ret_5d_mean
+      - lag1_excess_ret_10d_mean
+      - lag1_excess_ret_20d_mean
+      - lag1_bollinger_z_20d
+      - lag1_price_to_ma20
+      - lag1_rsi_14d
+      - lag1_macd_diff
+      - lag1_macd_hist
+      - lag1_ma_ratio_5_20
+      - lag1_ma_ratio_20_60
+      - lag1_amplitude
+      - lag1_vol_log
+      - lag1_amount_log
+      - lag1_amount_rank_pct
+      - lag1_amount_5d_mean
+      - lag1_amount_20d_mean
+      - lag1_net_mf_strength_5d_mean
+      - lag1_net_mf_strength_10d_mean
+      - lag1_net_mf_strength_20d_mean
+      - lag1_net_mf_strength_60d_mean
+      - lag1_net_mf_amount_to_amount
+      - lag1_main_mf_strength
+      - lag1_large_order_imbalance
+      - lag1_industry_neutral_ret_1d
+      - lag1_industry_neutral_ret_20d
+      - lag1_industry_turnover_rank
+      - lag1_industry_amount_rank
+      - lag1_industry_pb_rank
+      - lag1_industry_mv_rank
+      - lag1_log_circ_mv
+      - lag1_log_total_mv
+      - lag1_pb_winsor
+      - lag1_pe_ttm_winsor
+      - lag1_ps_ttm_winsor
+      - lag1_beta_20d
+      - lag1_beta_60d
+      - lag1_limit_position
+      - lag1_near_limit_up_2pct
+      - lag1_near_limit_down_2pct
+      - lag1_limit_touch_up
+      - lag1_limit_touch_down
+      - lag1_close_position
+      - lag1_gap_open
+      - lag1_weekday
+      - lag1_month
   dropped_after_validation:
     - lag1_is_limit_down
     - lag1_is_limit_up

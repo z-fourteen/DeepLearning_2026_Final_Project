@@ -1,0 +1,46 @@
+{
+  "data_version": "v20260526",
+  "datasets": [
+    {
+      "dataset_type": "lgbm",
+      "path": "D:\\05_fourteen\\ustc-life\\2026spring\\DL\\Final_Project\\data\\mart\\datasets\\dataset_lgbm_baseline_lightgbm_fixed_chinext_2016_2026_v1_v20260526.parquet",
+      "rows": 241643,
+      "features": 40,
+      "feature_set": "baseline_lightgbm_fixed",
+      "split_name": "chinext_2016_2026_v1",
+      "split_counts": {
+        "train": 161578,
+        "validation": 47628,
+        "test": 32437
+      }
+    },
+    {
+      "dataset_type": "sequence",
+      "path": "D:\\05_fourteen\\ustc-life\\2026spring\\DL\\Final_Project\\data\\mart\\datasets\\dataset_sequence_l20_advanced_sequence_fixed_chinext_2016_2026_v1_v20260526.npz",
+      "samples": 205621,
+      "lookback": 20,
+      "features": 62,
+      "feature_set": "advanced_sequence_fixed",
+      "split_name": "chinext_2016_2026_v1",
+      "split_counts": {
+        "train": 133403,
+        "validation": 43803,
+        "test": 28415
+      }
+    },
+    {
+      "dataset_type": "sequence",
+      "path": "D:\\05_fourteen\\ustc-life\\2026spring\\DL\\Final_Project\\data\\mart\\datasets\\dataset_sequence_l60_advanced_sequence_fixed_chinext_2016_2026_v1_v20260526.npz",
+      "samples": 192014,
+      "lookback": 60,
+      "features": 62,
+      "feature_set": "advanced_sequence_fixed",
+      "split_name": "chinext_2016_2026_v1",
+      "split_counts": {
+        "train": 121913,
+        "validation": 42464,
+        "test": 27637
+      }
+    }
+  ]
+}

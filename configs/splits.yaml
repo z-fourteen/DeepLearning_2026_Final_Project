@@ -1,0 +1,12 @@
+default_split: chinext_2016_2026_v1
+splits:
+  chinext_2016_2026_v1:
+    train:
+      start_date: "20160104"
+      end_date: "20221231"
+    validation:
+      start_date: "20230101"
+      end_date: "20241231"
+    test:
+      start_date: "20250101"
+      end_date: "20260525"
