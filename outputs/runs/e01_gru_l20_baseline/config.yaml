@@ -7,7 +7,6 @@ data:
   npz_path: "data/mart/datasets/dataset_sequence_l20_advanced_sequence_fixed_chinext_2016_2026_v1_v20260526.npz"
   train_split: "train"
   validation_split: "validation"
-  test_split: "test"
   num_workers: 0
   pin_memory: true
 

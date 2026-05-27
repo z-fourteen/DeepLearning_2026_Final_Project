@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+import math
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
@@ -108,6 +109,7 @@ class Trainer:
             min_count=self.min_daily_count,
         )
         metrics["val_loss"] = total_loss / max(total_samples, 1)
+        metrics.update(self._prediction_diagnostics(pred_tensor, target_tensor))
         return metrics
 
     def fit(self, max_epochs: int, checkpoint_path: str | Path | None = None) -> list[dict[str, float | int]]:
@@ -123,7 +125,7 @@ class Trainer:
             self.history.append(record)
 
             current = float(record.get(self.early_stop_metric, float("nan")))
-            if current > self.best_metric:
+            if math.isfinite(current) and current > self.best_metric:
                 self.best_metric = current
                 self.best_epoch = epoch
                 self.best_state_dict = copy.deepcopy(self.model.state_dict())
@@ -149,3 +151,46 @@ class Trainer:
         if self.best_state_dict is not None:
             self.model.load_state_dict(self.best_state_dict)
         return self.history
+
+    def _prediction_diagnostics(
+        self,
+        pred: torch.Tensor,
+        target: torch.Tensor,
+    ) -> dict[str, float | int]:
+        if pred.numel() == 0:
+            return {
+                "pred_count": 0,
+                "valid_pred_ratio": float("nan"),
+                "pred_mean": float("nan"),
+                "pred_std": float("nan"),
+                "pred_min": float("nan"),
+                "pred_max": float("nan"),
+                "target_mean": float("nan"),
+                "target_std": float("nan"),
+            }
+
+        pred = pred.float()
+        target = target.float()
+        finite_pred = torch.isfinite(pred)
+        finite_target = torch.isfinite(target)
+        finite_both = finite_pred & finite_target
+        valid_pred = pred[finite_pred]
+        valid_target = target[finite_target]
+
+        def stat(values: torch.Tensor, op: str) -> float:
+            if values.numel() == 0:
+                return float("nan")
+            if op == "std" and values.numel() < 2:
+                return float("nan")
+            return float(getattr(values, op)().item())
+
+        return {
+            "pred_count": int(pred.numel()),
+            "valid_pred_ratio": float(finite_both.float().mean().item()),
+            "pred_mean": stat(valid_pred, "mean"),
+            "pred_std": stat(valid_pred, "std"),
+            "pred_min": stat(valid_pred, "min"),
+            "pred_max": stat(valid_pred, "max"),
+            "target_mean": stat(valid_target, "mean"),
+            "target_std": stat(valid_target, "std"),
+        }

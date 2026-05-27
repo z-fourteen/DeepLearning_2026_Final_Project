@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
+import pandas as pd
 import torch
 import yaml
 from torch.utils.data import DataLoader
@@ -91,6 +92,40 @@ def build_dataloader(
     )
 
 
+@torch.no_grad()
+def predict_to_frame(
+    model: torch.nn.Module,
+    loader: DataLoader,
+    device: torch.device,
+    split: str,
+    model_name: str,
+    max_batches: int | None = None,
+) -> pd.DataFrame:
+    model.eval()
+    rows: list[pd.DataFrame] = []
+    for batch in limited_loader(loader, max_batches):
+        x = batch["x"].to(device, non_blocking=True)
+        pred = model(x).detach().cpu().view(-1).numpy()
+        label = batch["y"].detach().cpu().view(-1).numpy()
+        rows.append(
+            pd.DataFrame(
+                {
+                    "trade_date": [str(item) for item in batch["trade_date"]],
+                    "ts_code": [str(item) for item in batch["ts_code"]],
+                    "pred_score": pred,
+                    "label_rel_return": label,
+                    "split": split,
+                    "model_name": model_name,
+                }
+            )
+        )
+    if not rows:
+        return pd.DataFrame(
+            columns=["trade_date", "ts_code", "pred_score", "label_rel_return", "split", "model_name"]
+        )
+    return pd.concat(rows, ignore_index=True)
+
+
 def json_safe(value: Any) -> Any:
     if isinstance(value, dict):
         return {key: json_safe(item) for key, item in value.items()}
@@ -112,6 +147,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--max-epochs", type=int, help="Override max_epochs for smoke tests.")
     parser.add_argument("--max-train-batches", type=int, help="Limit train batches for smoke tests.")
     parser.add_argument("--max-val-batches", type=int, help="Limit validation batches for smoke tests.")
+    parser.add_argument("--max-test-batches", type=int, help="Limit test prediction batches for smoke tests.")
     return parser.parse_args()
 
 
@@ -136,6 +172,7 @@ def main() -> None:
 
     train_dataset = SequenceNPZDataset(npz_path, str(data_config.get("train_split", "train")))
     val_dataset = SequenceNPZDataset(npz_path, str(data_config.get("validation_split", "validation")))
+    test_dataset = SequenceNPZDataset(npz_path, str(data_config.get("test_split", "test")))
 
     batch_size = int(training_config.get("batch_size", 256))
     num_workers = int(data_config.get("num_workers", 0))
@@ -144,6 +181,7 @@ def main() -> None:
 
     train_loader = build_dataloader(train_dataset, batch_size, True, num_workers, pin_memory)
     val_loader = build_dataloader(val_dataset, batch_size, False, num_workers, pin_memory)
+    test_loader = build_dataloader(test_dataset, batch_size, False, num_workers, pin_memory)
 
     model_name = str(model_config.get("name", "gru_baseline"))
     if model_name != "gru_baseline":
@@ -166,11 +204,13 @@ def main() -> None:
         "npz_path": str(npz_path),
         "train_samples": len(train_dataset),
         "validation_samples": len(val_dataset),
+        "test_samples": len(test_dataset),
         "lookback": train_dataset.lookback,
         "num_features": train_dataset.num_features,
         "batch_size": batch_size,
         "train_steps_per_epoch": len(train_loader),
         "validation_steps_per_epoch": len(val_loader),
+        "test_steps": len(test_loader),
         "max_epochs": max_epochs,
         "model": model_name,
     }
@@ -198,11 +238,22 @@ def main() -> None:
     )
     history = trainer.fit(max_epochs=max_epochs, checkpoint_path=output_dir / "model.pt")
 
+    if trainer.best_state_dict is not None:
+        model.load_state_dict(trainer.best_state_dict)
+
+    prediction_frames = [
+        predict_to_frame(model, val_loader, device, "validation", model_name, args.max_val_batches),
+        predict_to_frame(model, test_loader, device, "test", model_name, args.max_test_batches),
+    ]
+    predictions = pd.concat(prediction_frames, ignore_index=True)
+    predictions.to_parquet(output_dir / "predictions.parquet", index=False)
+
     metrics = {
         "best_epoch": trainer.best_epoch,
         "best_metric": trainer.best_metric,
         "history": history,
         "summary": summary,
+        "prediction_rows": int(len(predictions)),
     }
     (output_dir / "metrics.json").write_text(
         json.dumps(json_safe(metrics), ensure_ascii=False, indent=2),
