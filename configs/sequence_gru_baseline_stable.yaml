@@ -30,13 +30,13 @@ training:
   batch_mode: "date"
   max_epochs: 80
   optimizer: "adamw"
-  learning_rate: 0.0001
+  learning_rate: 0.0002
   weight_decay: 0.000001
   loss_fn: "mse_ic"
-  ic_loss_alpha: 0.1
+  ic_loss_alpha: 0.15
   ic_loss_eps: 0.000001
   ic_loss_min_samples: 20
-  max_grad_norm: 0.5
+  max_grad_norm: 0.75
   scheduler: "cosine"
   early_stop_metric: "rank_ic_mean"
   early_stop_patience: 12
