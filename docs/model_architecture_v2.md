@@ -510,7 +510,68 @@ outputs/runs/{run_id}/metrics.json
 6. 不跨股票拼接序列窗口。
 7. 所有模型输出保留原始 `trade_date` 和 `ts_code`，否则无法进入回测。
 
-## 11. 下一步开发顺序
+## 11. 建议目录与文件结构
+
+第二阶段采用“按实现步骤逐步生成”的工程结构。原则是：只创建已经实现或即将实现的 Python 文件，不提前生成空壳文件；LSTM、回测器、DailyBatchSampler 等后置任务不占用当前主线目录。
+
+推荐目标结构如下：
+
+```text
+src/
+  __init__.py
+
+  data/
+    __init__.py
+    sequence_npz_dataset.py        # 已实现：读取 NPZ，按 split 过滤
+
+  models/
+    __init__.py                    # 实现 base.py 时创建
+    base.py                        # FeatureProjection / PredictionHead / BaseStockModel
+    gru_model.py                   # GRU Baseline，进入第 3 步时创建并实现
+    transformer_model.py           # Transformer Encoder，进入第 6 步时创建并实现
+    attention_pool.py              # GRU attention 消融时创建并实现
+
+  training/
+    __init__.py                    # 实现训练模块时创建
+    metrics.py                     # daily IC / RankIC / ICIR
+    trainer.py                     # 统一训练循环、early stopping、checkpoint
+
+  evaluation/
+    __init__.py                    # 正式评估/回测阶段创建
+    prediction_io.py               # 可选：predictions.parquet 输出规范
+    backtest.py                    # 后续 Top-K 回测器落地时创建
+
+scripts/
+  train_sequence.py                # 序列模型统一训练入口，训练闭环阶段创建
+
+configs/
+  sequence_gru_baseline.yaml       # GRU lookback=20 主 baseline
+  sequence_gru_l60.yaml            # GRU lookback=60 对比
+  sequence_transformer.yaml        # Transformer lookback=20
+```
+
+暂不建议创建：
+
+```text
+src/models/lstm_model.py           # LSTM 是 Backlog，当前不进入主线
+src/data/dataset.py                # 旧版手工滑窗 Dataset，不再作为主接口
+src/data/sampler.py                # 当前默认 DataLoader 足够，DailyBatchSampler 后置
+scripts/backtest.py                # 正式回测器尚未进入当前最小闭环
+requirements.txt                   # 当前默认使用 conda dl_env，先不重复维护
+```
+
+目录职责边界：
+
+| 目录 | 职责 | 当前阶段 |
+| --- | --- | --- |
+| `src/data/` | 只负责读取已构建好的模型数据集，不重新做特征工程或滑窗 | 已启动 |
+| `src/models/` | 模型组件与模型主体，先 GRU，再 Transformer | 即将启动 |
+| `src/training/` | 训练循环、指标、checkpoint、early stopping | GRU 可运行前启动 |
+| `src/evaluation/` | 预测文件整理与后续回测评估 | 后置 |
+| `scripts/` | 命令行入口，不承载核心业务逻辑 | 训练闭环阶段启动 |
+| `configs/` | 每个实验的可复现配置快照来源 | 与训练脚本同步启动 |
+
+## 12. 下一步开发顺序
 
 建议按以下工程顺序实现：
 
