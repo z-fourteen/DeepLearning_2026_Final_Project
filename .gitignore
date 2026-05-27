@@ -55,3 +55,4 @@ meta/file_registry.parquet
 meta/data_versions.parquet
 meta/pool_registry.parquet
 logs/audit/*.json
+outputs/factor_validation/

@@ -39,13 +39,46 @@ RAW_FEATURE_COLUMNS = [
     "intraday_return",
     "benchmark_ret_1d",
     "excess_ret_1d",
+    "beta_20d",
+    "beta_60d",
+    "residual_ret_20d",
+    "residual_ret_60d",
+    "rsi_14d",
+    "macd_diff",
+    "macd_dea",
+    "macd_hist",
+    "ma_ratio_5_20",
+    "ma_ratio_20_60",
+    "price_to_ma20",
+    "bollinger_z_20d",
+    "industry_ret_1d_mean",
+    "industry_neutral_ret_1d",
+    "industry_neutral_ret_20d",
+    "industry_turnover_rank",
+    "industry_amount_rank",
+    "industry_pb_rank",
+    "industry_mv_rank",
     "is_limit_up",
     "is_limit_down",
     "has_price_limit",
     "limit_ratio",
     "dist_to_limit_up",
     "dist_to_limit_down",
+    "limit_position",
+    "near_limit_up_2pct",
+    "near_limit_down_2pct",
+    "limit_touch_up",
+    "limit_touch_down",
     "listed_trading_days",
+    "industry_net_mf_strength_mean",
+    "industry_net_mf_strength_rank",
+    "industry_net_mf_positive_ratio",
+    "amount_rank_pct",
+    "turnover_cost_proxy",
+    "illiquidity_proxy",
+    "max_drawdown_20d",
+    "new_high_20d",
+    "turnover_acceleration",
     "weekday",
     "month",
     "is_month_end",
@@ -109,6 +142,20 @@ def read_pool(project_root: Path, config: dict[str, Any]) -> pd.DataFrame:
     return pool
 
 
+def read_basic(project_root: Path, config: dict[str, Any]) -> pd.DataFrame:
+    basic = read_raw_dataset(project_root, config, "basic")
+    required = ["ts_code", "industry", "market", "list_date"]
+    missing = [column for column in required if column not in basic.columns]
+    if missing:
+        raise ValueError(f"Basic dataset missing columns: {missing}")
+    basic = basic[required].copy()
+    basic["ts_code"] = basic["ts_code"].astype("string")
+    basic["industry"] = basic["industry"].fillna("UNKNOWN").astype("string")
+    basic["market"] = basic["market"].fillna("UNKNOWN").astype("string")
+    basic["list_date"] = basic["list_date"].astype("string")
+    return basic.drop_duplicates("ts_code", keep="last")
+
+
 def winsorize_by_date(df: pd.DataFrame, columns: list[str], lower: float = 0.01, upper: float = 0.99) -> pd.DataFrame:
     result = df.copy()
     grouped = result.groupby("trade_date", group_keys=False)
@@ -118,6 +165,12 @@ def winsorize_by_date(df: pd.DataFrame, columns: list[str], lower: float = 0.01,
         quantiles = grouped[column].transform(lambda s: s.quantile(lower))
         upper_quantiles = grouped[column].transform(lambda s: s.quantile(upper))
         result[f"{column}_winsor"] = result[column].clip(lower=quantiles, upper=upper_quantiles)
+    return result
+
+
+def industry_rank(df: pd.DataFrame, column: str, output: str, ascending: bool = True) -> pd.DataFrame:
+    result = df.copy()
+    result[output] = result.groupby(["trade_date", "industry"])[column].rank(pct=True, ascending=ascending)
     return result
 
 
@@ -163,6 +216,7 @@ def build_base_panel(project_root: Path, config: dict[str, Any], start_date: str
     ]
     panel = daily.merge(metric[metric_cols], on=["trade_date", "ts_code"], how="left")
     panel = panel.merge(moneyflow[moneyflow_cols], on=["trade_date", "ts_code"], how="left")
+    panel = panel.merge(read_basic(project_root, config), on="ts_code", how="left")
     panel = panel.sort_values(["ts_code", "trade_date"]).reset_index(drop=True)
     return filter_by_pool(panel, read_pool(project_root, config))
 
@@ -219,6 +273,9 @@ def add_features(panel: pd.DataFrame, windows: list[int], benchmark_returns: pd.
         df["buy_lg_amount"] + df["sell_lg_amount"]
     ).replace(0, np.nan)
     df["main_mf_strength"] = (df["buy_lg_amount"] - df["sell_lg_amount"]) / df["amount"].replace(0, np.nan)
+    df["amount_rank_pct"] = df.groupby("trade_date")["amount"].rank(pct=True)
+    df["turnover_cost_proxy"] = df["turnover_rate"] / df["amount_log"].replace(0, np.nan)
+    df["illiquidity_proxy"] = df["ret_1d"].abs() / df["amount"].replace(0, np.nan)
     df["amplitude"] = (df["high"] - df["low"]) / df["pre_close"].replace(0, np.nan)
     df["close_position"] = (df["close"] - df["low"]) / (df["high"] - df["low"]).replace(0, np.nan)
     df["upper_shadow_ratio"] = (df["high"] - df[["open", "close"]].max(axis=1)) / df["pre_close"].replace(0, np.nan)
@@ -227,13 +284,36 @@ def add_features(panel: pd.DataFrame, windows: list[int], benchmark_returns: pd.
     df["intraday_return"] = df["close"] / df["open"].replace(0, np.nan) - 1
     df = df.merge(benchmark_returns, on="trade_date", how="left")
     df["excess_ret_1d"] = df["ret_1d"] - df["benchmark_ret_1d"]
+    grouped = df.groupby("ts_code", group_keys=False)
+    close_grouped = grouped["close"]
+    df["rsi_14d"] = grouped["ret_1d"].transform(
+        lambda s: 100
+        - 100
+        / (
+            1
+            + s.clip(lower=0).rolling(14, min_periods=7).mean()
+            / (-s.clip(upper=0).rolling(14, min_periods=7).mean()).replace(0, np.nan)
+        )
+    )
+    ema12 = close_grouped.transform(lambda s: s.ewm(span=12, adjust=False, min_periods=12).mean())
+    ema26 = close_grouped.transform(lambda s: s.ewm(span=26, adjust=False, min_periods=26).mean())
+    df["macd_diff"] = ema12 - ema26
+    df["macd_dea"] = grouped["macd_diff"].transform(lambda s: s.ewm(span=9, adjust=False, min_periods=9).mean())
+    df["macd_hist"] = 2 * (df["macd_diff"] - df["macd_dea"])
+    ma5 = close_grouped.transform(lambda s: s.rolling(5, min_periods=3).mean())
+    ma20 = close_grouped.transform(lambda s: s.rolling(20, min_periods=10).mean())
+    ma60 = close_grouped.transform(lambda s: s.rolling(60, min_periods=30).mean())
+    close_std20 = close_grouped.transform(lambda s: s.rolling(20, min_periods=10).std())
+    df["ma_ratio_5_20"] = ma5 / ma20.replace(0, np.nan) - 1
+    df["ma_ratio_20_60"] = ma20 / ma60.replace(0, np.nan) - 1
+    df["price_to_ma20"] = df["close"] / ma20.replace(0, np.nan) - 1
+    df["bollinger_z_20d"] = (df["close"] - ma20) / close_std20.replace(0, np.nan)
     parsed_trade_date = pd.to_datetime(df["trade_date"], format="%Y%m%d", errors="coerce")
     df["weekday"] = parsed_trade_date.dt.weekday
     df["month"] = parsed_trade_date.dt.month
     df["is_month_end"] = parsed_trade_date.dt.is_month_end
     df = winsorize_by_date(df, ["pe_ttm", "pb", "ps_ttm"])
 
-    grouped = df.groupby("ts_code", group_keys=False)
     for window in windows:
         df[f"ret_{window}d_mean"] = grouped["ret_1d"].transform(lambda s: s.rolling(window, min_periods=max(2, window // 2)).mean())
         df[f"ret_{window}d_std"] = grouped["ret_1d"].transform(lambda s: s.rolling(window, min_periods=max(2, window // 2)).std())
@@ -246,8 +326,50 @@ def add_features(panel: pd.DataFrame, windows: list[int], benchmark_returns: pd.
         df[f"excess_ret_{window}d_mean"] = grouped["excess_ret_1d"].transform(
             lambda s: s.rolling(window, min_periods=max(2, window // 2)).mean()
         )
+    rolling_high_20 = grouped["close"].transform(lambda s: s.rolling(20, min_periods=10).max())
+    rolling_peak_20 = grouped["close"].transform(lambda s: s.rolling(20, min_periods=10).max())
+    df["max_drawdown_20d"] = df["close"] / rolling_peak_20.replace(0, np.nan) - 1
+    df["new_high_20d"] = df["close"].ge(rolling_high_20).astype(int)
+    df["turnover_acceleration"] = df["turnover_rate"] / grouped["turnover_rate"].transform(
+        lambda s: s.rolling(20, min_periods=10).mean()
+    ).replace(0, np.nan) - 1
+    df["_benchmark_ret_x_ret"] = df["benchmark_ret_1d"] * df["ret_1d"]
+    df["_benchmark_ret_sq"] = df["benchmark_ret_1d"] * df["benchmark_ret_1d"]
+    grouped = df.groupby("ts_code", group_keys=False)
+    for window in [20, 60]:
+        mean_x = grouped["benchmark_ret_1d"].transform(lambda s: s.rolling(window, min_periods=max(10, window // 2)).mean())
+        mean_y = grouped["ret_1d"].transform(lambda s: s.rolling(window, min_periods=max(10, window // 2)).mean())
+        mean_xy = grouped["_benchmark_ret_x_ret"].transform(
+            lambda s: s.rolling(window, min_periods=max(10, window // 2)).mean()
+        )
+        mean_x2 = grouped["_benchmark_ret_sq"].transform(lambda s: s.rolling(window, min_periods=max(10, window // 2)).mean())
+        beta = (mean_xy - mean_x * mean_y) / (mean_x2 - mean_x * mean_x).replace(0, np.nan)
+        df[f"beta_{window}d"] = beta
+        df[f"residual_ret_{window}d"] = df["ret_1d"] - beta * df["benchmark_ret_1d"]
+    df = df.drop(columns=["_benchmark_ret_x_ret", "_benchmark_ret_sq"])
+    industry_return = df.groupby(["trade_date", "industry"])["ret_1d"].transform("mean")
+    df["industry_ret_1d_mean"] = industry_return
+    df["industry_neutral_ret_1d"] = df["ret_1d"] - industry_return
+    df["industry_neutral_ret_20d"] = df.groupby("ts_code")["industry_neutral_ret_1d"].transform(
+        lambda s: s.rolling(20, min_periods=10).mean()
+    )
+    df = industry_rank(df, "turnover_rate", "industry_turnover_rank")
+    df = industry_rank(df, "amount", "industry_amount_rank")
+    df = industry_rank(df, "pb_winsor", "industry_pb_rank")
+    df = industry_rank(df, "circ_mv", "industry_mv_rank")
+    df["industry_net_mf_strength_mean"] = df.groupby(["trade_date", "industry"])["net_mf_amount_to_amount"].transform("mean")
+    df["industry_net_mf_strength_rank"] = df.groupby(["trade_date", "industry"])["net_mf_amount_to_amount"].rank(pct=True)
+    df["industry_net_mf_positive_ratio"] = df.groupby(["trade_date", "industry"])["net_mf_amount_to_amount"].transform(
+        lambda s: (s > 0).mean()
+    )
     df["dist_to_limit_up"] = df["limit_up_price"] / df["close"].replace(0, np.nan) - 1
     df["dist_to_limit_down"] = df["close"] / df["limit_down_price"].replace(0, np.nan) - 1
+    limit_range = (df["limit_up_price"] - df["limit_down_price"]).replace(0, np.nan)
+    df["limit_position"] = (df["close"] - df["limit_down_price"]) / limit_range
+    df["near_limit_up_2pct"] = df["dist_to_limit_up"].le(0.02).fillna(False).astype(int)
+    df["near_limit_down_2pct"] = df["dist_to_limit_down"].le(0.02).fillna(False).astype(int)
+    df["limit_touch_up"] = df["high"].ge(df["limit_up_price"]).fillna(False).astype(int)
+    df["limit_touch_down"] = df["low"].le(df["limit_down_price"]).fillna(False).astype(int)
     return df
 
 

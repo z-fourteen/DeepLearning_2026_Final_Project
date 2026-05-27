@@ -1,685 +1,639 @@
-# Agent 4 Data Mart 特征工程体系白盒审计与深度分析报告
+# Agent 4 Data Mart 特征工程体系复审报告
 
 报告日期：2026-05-26  
-审计对象：`pipelines/mart/agent.py`、`configs/features.yaml`、`configs/labels.yaml`、`docs/experiment_manual.md`、`docs/20260526_progress_agent1_agent2_agent3_report.md`  
-任务语境：创业板指 `399006.SZ` 历史动态成分股，日频，预测未来 5 日相对创业板指数的超额收益，并用于横截面排序选股。
+审计对象：`pipelines/mart/agent.py`、`pipelines/mart/validation.py`、`configs/features.yaml`、`configs/labels.yaml`、`data/mart/*_v20260526.parquet`、`outputs/factor_validation/v20260526/*`  
+任务语境：创业板指 `399006.SZ` 历史动态成分股，日频，预测未来 5 日相对创业板指数的超额收益，并用于横截面排序选股。  
+复审结论摘要：Agent 4 已从“最小可运行 baseline”升级为“具备创业板微观结构意识的研究数据集市”。第一次审计指出的两个最致命问题，即特征未统一滞后、benchmark horizon 固定为 5 日，已经在工程上完成修正。但新版本也引入了更复杂的共线性、验证口径和样本覆盖风险，需要继续治理。
 
 ## 1. 当前特征工程体系总览与特征树
 
 ### 1.1 系统梳理
 
-当前 Agent 4 已实现一个极窄但可运行的 baseline 数据集市。其数据流为：
+当前 Agent 4 的数据流已经变为：
 
 ```text
-raw daily + raw metric + raw moneyflow
+raw daily + metric + moneyflow + basic
         -> SCD2 创业板动态股票池过滤
-        -> 基础面板 panel
-        -> add_features()
-        -> read_benchmark()
-        -> add_labels()
-        -> security_daily_state tradable_only 过滤
-        -> features_daily / labels / dataset
+        -> Agent 3 security_daily_state 注入
+        -> 只保留 tradable 样本
+        -> 市场指数当日收益合并
+        -> 价格/波动/流动性/资金流/估值/市场相对/行业相对/技术指标/涨跌停/时间特征
+        -> add_lagged_features(): 全部模型特征统一 lag1_
+        -> horizon 参数化 benchmark future return
+        -> labels 与 dataset 落盘
+        -> 因子 IC/RankIC/分层/相关性/推荐闭环
 ```
 
-当前实际特征来自 `pipelines/mart/agent.py`：
-
-- 基础收益：`ret_1d = close / pre_close - 1`。
-- 对数成交：`amount_log = log1p(amount)`、`vol_log = log1p(vol)`。
-- 流动性与估值原始字段：`turnover_rate`、`turnover_rate_f`、`volume_ratio`、`pe_ttm`、`pb`、`ps_ttm`、`total_mv`、`circ_mv`。
-- 资金流原始字段：`net_mf_amount`、`net_mf_vol`、`buy_lg_amount`、`sell_lg_amount`。
-- 滚动窗口特征：对 `[5, 10, 20, 60]` 窗口构造 `ret_{w}d_mean`、`ret_{w}d_std`、`amount_{w}d_mean`。
-- 标签：`future_return = close.shift(-horizon) / close - 1`，`label_rel_return = future_return - benchmark_future_return`。
-
-阶段报告显示当前产物：
+当前落盘验证产物说明：本次 `v20260526` mart 文件是短窗口 smoke-test / 修正验证产物，窗口来自 `20250501-20260525`，并不代表原始数据或正式训练集只有一年。原始 raw/state 层覆盖 `20160104-20260525` 全历史，正式开跑时应使用全历史窗口重建 mart 并重跑 factor validation。
 
 ```text
-features_daily_v20260526.parquet: 25259 rows
-labels_v20260526.parquet: 25259 rows
-dataset_v20260526.parquet: 24679 rows
-date range: 20250506 至 20260518
+features_daily_v20260526.parquet: 25259 rows, 83 columns, 81 个 lag1_ 特征
+dataset_v20260526.parquet: 24679 rows, 86 columns
+current mart window: 20250501-20260525 smoke-test
+full-history expected window: 20160104-20260525
+raw_same_day feature columns: []
+feature_columns in audit: 81
+feature_availability: lag1_close_to_next_session
+label_horizon: 5
+future_leakage_check: PASS
 ```
+
+这说明当前模型输入已经不再暴露裸当日特征，而是统一以 `lag1_` 前缀输出，显著提升了时间边界可信度。251 个交易日、约 2.47 万行只反映当前短窗口验证产物；正式实验若用全历史重建，样本规模应接近 `2521 个交易日 × 每日约 100 只成分股`，约 25 万行量级。
 
 ### 1.2 特征树
 
 ```text
 Feature Tree
 ├─ A. 价格动量类
-│  ├─ ret_1d
-│  ├─ ret_5d_mean
-│  ├─ ret_10d_mean
-│  ├─ ret_20d_mean
-│  └─ ret_60d_mean
+│  ├─ lag1_ret_1d
+│  ├─ lag1_ret_5d
+│  ├─ lag1_ret_20d
+│  ├─ lag1_ret_{5,10,20,60}d_mean
+│  └─ lag1_excess_ret_{5,10,20,60}d_mean
 ├─ B. 波动率类
-│  ├─ ret_5d_std
-│  ├─ ret_10d_std
-│  ├─ ret_20d_std
-│  └─ ret_60d_std
+│  ├─ lag1_ret_{5,10,20,60}d_std
+│  ├─ lag1_amplitude
+│  └─ lag1_bollinger_z_20d
 ├─ C. 成交量/流动性类
-│  ├─ amount_log
-│  ├─ vol_log
-│  ├─ turnover_rate
-│  ├─ turnover_rate_f
-│  ├─ volume_ratio
-│  ├─ amount_5d_mean
-│  ├─ amount_10d_mean
-│  ├─ amount_20d_mean
-│  └─ amount_60d_mean
+│  ├─ lag1_amount_log
+│  ├─ lag1_vol_log
+│  ├─ lag1_volume_ratio
+│  ├─ lag1_turnover_rate / lag1_turnover_rate_f
+│  ├─ lag1_amount_{5,10,20,60}d_mean
+│  └─ lag1_turnover_{5,10,20,60}d_mean/std
 ├─ D. 资金流类
-│  ├─ net_mf_amount
-│  ├─ net_mf_vol
-│  ├─ buy_lg_amount
-│  └─ sell_lg_amount
+│  ├─ lag1_net_mf_amount_to_amount
+│  ├─ lag1_large_order_imbalance
+│  ├─ lag1_main_mf_strength
+│  └─ lag1_net_mf_strength_{5,10,20,60}d_mean
 ├─ E. 估值类
-│  ├─ pe_ttm
-│  ├─ pb
-│  └─ ps_ttm
+│  ├─ lag1_pe_ttm_winsor
+│  ├─ lag1_pb_winsor
+│  └─ lag1_ps_ttm_winsor
 ├─ F. 市值/规模类
-│  ├─ total_mv
-│  └─ circ_mv
+│  ├─ lag1_log_total_mv
+│  └─ lag1_log_circ_mv
 ├─ G. 市场相对类
-│  └─ label 端使用 benchmark_future_return；特征端尚无相对指数收益、beta、alpha
+│  ├─ lag1_benchmark_ret_1d
+│  ├─ lag1_excess_ret_1d
+│  ├─ lag1_beta_20d / lag1_beta_60d
+│  └─ lag1_residual_ret_20d / lag1_residual_ret_60d
 ├─ H. 行业相对类
-│  └─ 尚无行业哑变量、行业中性化、行业相对估值/动量/资金流
+│  ├─ lag1_industry_ret_1d_mean
+│  ├─ lag1_industry_neutral_ret_1d / lag1_industry_neutral_ret_20d
+│  ├─ lag1_industry_turnover_rank
+│  ├─ lag1_industry_amount_rank
+│  ├─ lag1_industry_pb_rank
+│  └─ lag1_industry_mv_rank
 ├─ I. 时间类
-│  └─ 尚无 weekday、month、month-end、holiday effect
-└─ J. 技术指标类
-   └─ 尚无 MA、EMA、MACD、RSI、KDJ、ATR、Bollinger Band
+│  ├─ lag1_weekday
+│  ├─ lag1_month
+│  └─ lag1_is_month_end
+├─ J. 技术指标类
+│  ├─ lag1_rsi_14d
+│  ├─ lag1_macd_diff / dea / hist
+│  ├─ lag1_ma_ratio_5_20 / ma_ratio_20_60
+│  ├─ lag1_price_to_ma20
+│  └─ lag1_bollinger_z_20d
+└─ K. 创业板涨跌停与状态类
+   ├─ lag1_is_limit_up / lag1_is_limit_down
+   ├─ lag1_has_price_limit
+   ├─ lag1_limit_ratio
+   ├─ lag1_dist_to_limit_up
+   ├─ lag1_dist_to_limit_down
+   └─ lag1_listed_trading_days
 ```
 
 ### 1.3 九大维度映射与底层拆解
 
-| 维度 | 当前覆盖 | 金融意义 | 市场微观行为 | Alpha 核心假设 | 隐藏尾部风险 |
+| 维度 | 当前覆盖 | 金融意义 | 微观行为 | Alpha 假设 | 尾部风险 |
 | --- | --- | --- | --- | --- | --- |
-| 价格动量类 | 弱覆盖 | 捕捉短中期价格延续或反转 | 散户追涨杀跌、游资接力、题材惯性 | 过去收益含有未来 5 日排序信息 | 涨停后不可买、退潮时高动量坍塌 |
-| 波动率类 | 基础覆盖 | 衡量不确定性、情绪强度与风险预算 | 波动聚集、日内冲击放大 | 创业板高波动既是风险也是事件 Alpha 载体 | 低波失效，高波可能只是崩盘前兆 |
-| 成交量/流动性类 | 中等覆盖 | 衡量交易拥挤度、关注度与可交易性 | 高换手、资金接力、散户聚集 | 活跃度变化领先价格变化 | 高换手衰竭、流动性踩踏、交易成本吞噬 |
-| 资金流类 | 粗糙覆盖 | 衡量主动买卖力量 | 大单/主力/游资净流入流出 | 净流入与大单买入具有短期信息优势 | 原始金额强受市值影响，不标准化会学到规模噪声 |
-| 估值类 | 基础覆盖 | 衡量成长预期和价格相对基本面 | 高成长公司估值容忍度高 | 估值极端反映错误定价或风格溢价 | 创业板估值长时间失锚，PE 缺失或负值严重 |
-| 市场相对类 | 标签覆盖，特征缺失 | 将个股收益剥离指数 Beta | 创业板指数系统性涨跌强 | 相对收益更适合选股 | 标签端正确不代表特征端能识别 Beta 暴露 |
-| 行业相对类 | 缺失 | 剥离题材/行业共同冲击 | 医药、新能源、AI 等轮动极快 | 行业内排序比全市场排序更纯净 | 缺失后模型可能只是在押行业风格 |
-| 时间类 | 缺失 | 捕捉日历效应与调仓结构 | 月末资金、节前避险、财报季 | 时间状态影响风险偏好 | 时间特征若粗糙，易成为不可泛化噪声 |
-| 技术指标类 | 基本缺失 | 识别趋势、超买超卖、突破 | 动量与反转共存 | 非线性技术状态可辅助 5 日收益 | 指标高度共线、参数挖掘过拟合 |
-
-结论：当前特征工程完成的是“最小可运行面板”，不是“创业板适配型 Alpha 特征系统”。其最大优点是链路清晰、股票池和可交易状态已有基础；最大缺陷是特征表达贫瘠，且关键时间边界控制不足。
+| 价格动量 | 强 | 趋势延续与短期反转 | 游资接力、散户追涨、题材扩散 | 过去收益路径包含未来 5 日排序信息 | 高度拥挤后退潮，涨停不可买 |
+| 波动率 | 中强 | 情绪强度、风险预算、冲击扩散 | 波动聚集、冲高回落、换手释放 | 高波动与量价/资金流交互后可转 Alpha | 单独高波动可能只是崩盘前兆 |
+| 成交量/流动性 | 强 | 热度、拥挤、可交易性 | 高换手、量价共振、流动性踩踏 | 活跃度变化领先价格扩散 | 交易成本和冲击成本未进入特征验证 |
+| 资金流 | 强 | 主动买卖压力 | 大单行为、资金接力 | 净流入强度和大单不平衡具有短期信息 | moneyflow 盘后口径需严格 T+1 使用 |
+| 估值 | 中 | 成长预期与风格暴露 | 高估值容忍、风格切换 | winsor 后可做风格控制 | 创业板 PE/PB 在短周期中经常钝化 |
+| 市场相对 | 强 | 剥离指数 Beta | 创业板系统性共振 | residual momentum 更贴近选股 Alpha | beta 估计窗口短，当前短窗口验证下稳定性需复核 |
+| 行业相对 | 中强 | 剥离题材共同冲击 | 行业轮动、板块扩散 | 行业内 rank 更有截面单调性 | 行业分类静态且可能粗糙 |
+| 时间 | 弱中 | 日历效应、调仓结构 | 月末/周内资金行为 | 作为状态变量辅助 | `lag1_month`、`lag1_weekday` 的滞后语义不自然 |
+| 技术指标 | 中强 | 趋势、超买超卖、突破 | 动量与反转共存 | RSI/MACD/均线状态可辅助 5 日收益 | 与收益均值、均线、Bollinger 高共线 |
 
 ## 2. 创业板对比主板的微观结构与风格差异
 
 ### 2.1 高波动性
 
-创业板股票普遍小市值、高成长、高估值，信息披露与预期修正对价格的弹性大于沪深 300 等主板大盘股。传统 Low-Vol 因子在主板常被解释为行为偏差和风险预算约束带来的稳定溢价，但在创业板容易失效，原因有三点：
+创业板的高波动不是单纯风险惩罚项，而是信息冲击、题材扩散和流动性再定价的载体。新系统加入 `lag1_amplitude`、`lag1_ret_*d_std`、`lag1_bollinger_z_20d`，比旧版只靠 rolling std 更贴近创业板生态。
 
-1. 低波股票往往是低关注、低弹性、题材真空股票，在创业板横截面中缺乏资金推动。
-2. 创业板收益分布具有明显尖峰厚尾，波动率上升不总是坏信号，也可能是题材启动、涨停打开、资金换手的前兆。
-3. 20% 涨跌停制度使趋势推进更剧烈，波动率可能由价格发现产生，而非纯粹风险。
-
-因此，`ret_5d_std`、`ret_10d_std`、`ret_20d_std` 在创业板不能简单作为负向风险因子使用。更合理的用法是与动量、成交量、资金流交互：高波动 + 放量 + 净流入可能是趋势确认；高波动 + 缩量 + 净流出则可能是流动性风险释放。
+审计判断：波动率特征已具备研究价值，但仍缺 ATR、最大回撤、上行/下行波动拆分。当前 `lag1_ret_60d_std` 被推荐为 baseline，说明样本期内长期波动或风格活跃度具有较强分层能力；但这类因子在熊市可能反向，需要分状态验证后再进入最终模型。
 
 ### 2.2 高换手与情绪驱动
 
-创业板的高换手源于散户参与、短线资金偏好、主题交易和涨跌停制度共同作用。资金流因子在创业板的边际效用通常高于主板，因为中小盘股票对边际订单更敏感，且大单/超大单更容易改变盘口供需。
+新系统显著强化了高换手表达：`turnover_rate`、`turnover_rate_f`、`turnover_{w}d_mean/std`、`volume_ratio`、`amount_log`、`amount_{w}d_mean` 均已落盘。因子验证中，成交额和换手相关特征在 long-short 中表现最强：
 
-当前系统保留了 `turnover_rate`、`turnover_rate_f`、`volume_ratio`、`net_mf_amount`、`buy_lg_amount`、`sell_lg_amount`，方向正确，但表达方式不够工业化：
+```text
+lag1_amount_log long_short_mean_return: 0.01548
+lag1_turnover_rate_f long_short_mean_return: 0.01362
+lag1_turnover_rate long_short_mean_return: 0.01320
+```
 
-- 原始资金流金额没有除以成交额、市值或自由流通市值，模型会混淆“资金强度”和“公司规模”。
-- 缺少高换手持续性，例如 `turnover_rate_5d_mean`、`turnover_rate_5d_z`、`turnover_acceleration`。
-- 缺少量价共振，例如 `ret_1d * volume_ratio`、`ret_5d_mean * amount_5d_z`。
+这与创业板“资金热度驱动短周期收益”的经验一致。但这里也埋着危险：成交额/换手/市值强相关，可能代表规模和流动性风格，而非纯 Alpha。
 
 ### 2.3 小市值风格与盘口脆弱性
 
-创业板成分股虽已由指数规则筛选，但仍显著偏向成长、小中市值、流动性分层明显。`total_mv` 与 `circ_mv` 捕捉了规模暴露，但当前使用原始市值而非 `log_total_mv`、`log_circ_mv`，存在两个问题：
+旧版使用裸 `total_mv/circ_mv`，新版改为 `log_total_mv/log_circ_mv`，并加入行业内市值 rank，方向正确。验证显示 `lag1_log_circ_mv`、`lag1_log_total_mv` 有显著 long-short 表现，但最大回撤分别达到约 -42% 和 -44%，说明规模因子虽有收益差异，却伴随强风格切换风险。
 
-1. 量级巨大，容易让树模型优先按规模粗暴切分。
-2. 与成交额、资金流原始金额共线，导致模型将资金流 Alpha 误读为规模因子。
-
-市值因子在创业板具有非线性：过大市值可能弹性不足，过小市值可能流动性脆弱且冲击成本极高，中间市值叠加题材和流动性改善往往更具交易价值。因此建议使用分位数、截面 z-score、行业内规模分位，而非裸 `total_mv`。
+结论：规模特征应作为风格控制和非线性分裂变量，而不应在最终组合中被模型过度依赖。
 
 ### 2.4 动量与反转共存机理
 
-创业板常呈现“短期反转、中期动量”的撕裂结构。行为金融上，短期反转来自散户过度反应、涨跌停附近的获利兑现和隔夜情绪回摆；中期动量来自题材扩散、机构调仓滞后和游资接力。
+新系统已覆盖 `ret_1d`、`ret_5d`、`ret_20d`、多窗口均值、RSI、MACD、均线比、Bollinger。它终于能表达创业板“短期反转、中期动量”的撕裂结构：
 
-数学上可将 `ret_1`、`ret_5`、`ret_20`、`RSI`、`MACD` 视为不同时间尺度的状态变量：
+- `lag1_ret_1d`：隔日情绪冲击，适合识别短反转。
+- `lag1_ret_5d_mean`：短期过热与趋势混合。
+- `lag1_ret_20d_mean`、`lag1_ret_60d_mean`：中期题材扩散和风格动量。
+- `lag1_rsi_14d`：超买超卖状态。
+- `lag1_macd_hist`：趋势加速度。
 
-- `ret_1d`：极短期冲击项，若涨幅过大且无资金继续流入，未来 5 日可能反转。
-- `ret_5d_mean`：短期趋势和交易拥挤度的混合变量，在创业板既可能代表趋势，也可能代表过热。
-- `ret_20d_mean`：更接近题材扩散和中期动量，若伴随成交额抬升，可能更稳定。
-- `RSI`：可将涨跌幅分解为上行动能与下行动能，适合识别短期超买超卖。
-- `MACD`：通过 EMA12、EMA26 和 DEA 捕捉趋势斜率与拐点，适合刻画中短期动量状态。
-
-当前系统没有 `RSI`、`MACD`，只能通过滚动均值和标准差粗略表达价格状态。对于未来 5 日超额收益，缺少 `ret_1d` 与 `ret_20d_mean` 的交叉、`RSI` 超买回落、`MACD` DIF/DEA 金叉强度等关键状态，因此难以刻画创业板动量与反转共存的核心结构。
+但相关性表显示：`lag1_ret_5d` 与 `lag1_ret_5d_mean` 相关 0.992，`lag1_ret_20d` 与 `lag1_ret_20d_mean` 相关 0.986。技术指标体系必须剪枝，否则深度模型会在冗余趋势信号上过拟合。
 
 ## 3. 核心特征大类有效性白盒审计
 
 ### 3.1 价格动量类
 
-1. 金融逻辑：捕获投资者反应不足导致的趋势延续，以及过度反应后的短期反转。
-2. 创业板适配性：被显著放大。题材传播快、涨停制度强、散户追涨明显。
-3. 时间稳定性：牛市中 `ret_20d_mean` 更可能有效；熊市中高动量容易成为流动性陷阱；震荡市中 `ret_1d` 反转更强。
-4. 横截面有效性：潜在有效，但必须区分短期冲击和中期趋势。
-5. 标签一致性：与未来 5 日超额收益合理相关，但需避免使用当日收盘后才可得数据去假设当日收盘成交。
-6. 泄露风险：当前特征没有统一 `shift(1)`。若信号定义为 T 日收盘后、T+1 交易，则 T 日完整行情可用于 T+1；但若 dataset 被模型或回测误解为 T 日可交易信号，`ret_1d` 与 rolling 当日值会形成交易时点泄露。手册明确要求最终统一 `shift(1)`，当前未执行。
-7. LightGBM 适配性：树模型能捕捉非线性阈值，如高 `ret_5d_mean` 后反转；但窗口均值之间共线较强。
-8. GRU/Transformer 适配性：当前把序列压缩为均值，丢失路径信息，不适合作为高级时序模型主输入。
+1. 金融逻辑：捕捉反应不足、过度反应、题材延续。
+2. 创业板适配性：强；20% 涨跌停强化趋势和反转共存。
+3. 时间稳定性：牛市中期动量强，震荡市短反转强，熊市高动量易崩。
+4. 横截面有效性：`ret_5d_mean`、`ret_10d_mean`、`ret_20d_mean` 被推荐为 baseline，但 RankIC 绝对值并不高，更多依赖分层收益。
+5. 标签一致性：与未来 5 日超额收益匹配。
+6. 泄露体检：已统一 `lag1_`，dataset 中无裸当日特征，核心泄露风险显著降低。
+7. LightGBM 适配性：适合阈值和交互，但同源窗口过多。
+8. GRU/Transformer 适配性：比旧版更好，但如果序列输入仍使用 lag1 摘要而不是原始逐日路径，会损失时序表达。
 
 ### 3.2 波动率类
 
-1. 金融逻辑：捕获风险溢价、信息冲击和情绪强度。
-2. 创业板适配性：高适配，但方向非单调。
-3. 时间稳定性：牛市高波动可伴随 Alpha；熊市高波动多为风险暴露；震荡市高波动后可能反转。
-4. 横截面有效性：单独排序不稳定，需与成交量、涨跌停、资金流交互。
-5. 标签一致性：未来 5 日收益对短期波动状态敏感，合理。
-6. 泄露风险：rolling 按 `ts_code` 分组且只向后滚动，没有 centered rolling；但同样缺少统一信号滞后。
-7. LightGBM 适配性：适合阈值分裂，如 `ret_20d_std` 高低分组。
-8. GRU/Transformer 适配性：滚动 std 是二阶摘要，平稳性优于价格，但会抹掉波动聚集路径。
+1. 金融逻辑：风险溢价、事件冲击、情绪强度。
+2. 创业板适配性：强，但方向非单调。
+3. 时间稳定性：需分牛熊震荡验证；当前 regime 分析是事后归因，不宜当实时状态结论。
+4. 横截面有效性：`lag1_ret_60d_std` 与 `lag1_ret_20d_std` 被 baseline 推荐。
+5. 标签一致性：合理。
+6. 泄露体检：rolling 使用历史窗口并 lag1，基本合格。
+7. LightGBM 适配性：强。
+8. GRU/Transformer 适配性：建议加入原始日收益序列与波动状态，而不只用 rolling std。
 
 ### 3.3 成交量/流动性类
 
-1. 金融逻辑：捕获关注度、换手拥挤度、流动性改善或衰竭。
-2. 创业板适配性：强放大。高换手是创业板最重要的微观状态之一。
-3. 时间稳定性：牛市放量更偏正向，熊市放量可能是出逃，震荡市放量冲高后易回落。
-4. 横截面有效性：`turnover_rate` 与 `volume_ratio` 有潜在单调性，但裸 `amount` 均值偏向大市值。
-5. 标签一致性：未来 5 日超额收益对短期热度非常敏感，逻辑一致。
-6. 泄露风险：当日成交数据能否用于 T 日信号取决于信号生成时点；当前没有在字段元数据中声明可得性。
-7. LightGBM 适配性：强，能处理换手率非线性和缺失。
-8. GRU/Transformer 适配性：成交量序列对题材生命周期有价值，但当前仅输出 rolling mean，不足。
+1. 金融逻辑：关注度、资金热度、拥挤度和可交易性。
+2. 创业板适配性：极强，是当前最有效的一类。
+3. 时间稳定性：牛市强正向，熊市可能变成流动性出逃。
+4. 横截面有效性：验证结果强，但与市值、资金流共线严重。
+5. 标签一致性：对 5 日 horizon 合理。
+6. 泄露体检：已 lag1；盘后统计口径通过 T+1 使用缓解。
+7. LightGBM 适配性：强，但 `amount_log` 与 `amount_*d_mean` 高相关。
+8. GRU/Transformer 适配性：适合建模题材生命周期。
 
 ### 3.4 资金流类
 
-1. 金融逻辑：捕获主动买卖压力和大单资金行为。
-2. 创业板适配性：非常强。游资和大单冲击在小中市值股票中影响更大。
-3. 时间稳定性：牛市净流入可延续；熊市净流入可能只是护盘或诱多；震荡市需结合价格位置。
-4. 横截面有效性：原始金额单调性弱，标准化后更强。
-5. 标签一致性：对 5 日收益高度相关，尤其适合短周期选股。
-6. 泄露风险：如果 moneyflow 数据为盘后统计，必须只作为收盘后信号输入，且交易从 T+1 开始。
-7. LightGBM 适配性：原始大额异常值会诱导树模型过度切分，需 winsorize 与比例化。
-8. GRU/Transformer 适配性：资金流序列若标准化为净流入强度、连续流入天数，适合注意力捕捉资金接力。
+1. 金融逻辑：主动买卖压力与大单行为。
+2. 创业板适配性：极强。
+3. 时间稳定性：强依赖市场情绪状态。
+4. 横截面有效性：`net_mf_strength_*d_mean`、`net_mf_amount_to_amount` 表现进入 baseline。
+5. 标签一致性：适合未来 5 日短周期。
+6. 泄露体检：已 lag1，较旧版质变。
+7. LightGBM 适配性：比例化后更稳定。
+8. GRU/Transformer 适配性：资金流连续性适合序列模型。
 
 ### 3.5 估值类
 
-1. 金融逻辑：捕获成长预期、估值修复和价值错杀。
-2. 创业板适配性：被钝化。创业板高成长、高研发、盈利波动大，传统 PE/PB 有时解释力弱。
-3. 时间稳定性：熊市估值约束增强；牛市估值容忍度提高；震荡市估值修复可能有效。
-4. 横截面有效性：PE 缺失、负值、极端值会破坏单调性。
-5. 标签一致性：对 5 日收益偏弱，更像风格控制变量。
-6. 泄露风险：若 metric 为盘后字段，需滞后；当前没有统一滞后。
-7. LightGBM 适配性：能处理非线性，但对极端 PE/PB 需裁剪。
-8. GRU/Transformer 适配性：日频估值变化慢，作为静态风格嵌入可用，不应高权重输入。
+1. 金融逻辑：成长预期和风格暴露。
+2. 创业板适配性：中等，被高成长叙事钝化。
+3. 时间稳定性：熊市估值约束增强。
+4. 横截面有效性：`industry_pb_rank`、`pb_winsor` 有验证信号，但最大回撤较大。
+5. 标签一致性：对 5 日收益偏弱，更适合风格控制。
+6. 泄露体检：winsor 按当日截面后再 lag1，时间边界可接受。
+7. LightGBM 适配性：winsor 后更稳。
+8. GRU/Transformer 适配性：慢变量，应作为静态或低频特征。
 
 ### 3.6 市值/规模类
 
-1. 金融逻辑：捕获小市值溢价、流动性风险补偿和弹性。
-2. 创业板适配性：强，但非线性。
-3. 时间稳定性：小盘牛市强，熊市流动性踩踏严重，震荡市受题材影响。
-4. 横截面有效性：有排序价值，但必须行业中性和流动性约束。
-5. 标签一致性：对 5 日收益可能有效，但更适合作风格控制。
-6. 泄露风险：市值是收盘后价格与股本派生字段，交易时点必须滞后。
-7. LightGBM 适配性：裸值量级过大，建议 log + 截面标准化。
-8. GRU/Transformer 适配性：慢变量，不适合长序列高频更新；可作为静态特征拼接。
+1. 金融逻辑：小市值弹性与流动性风险补偿。
+2. 创业板适配性：强但非线性。
+3. 时间稳定性：风格切换风险高。
+4. 横截面有效性：`log_circ_mv` 进入 baseline。
+5. 标签一致性：更多是风格暴露。
+6. 泄露体检：lag1 后可接受。
+7. LightGBM 适配性：log 化后可用。
+8. GRU/Transformer 适配性：不宜在日序列中重复灌入高权重。
 
 ### 3.7 市场相对类
 
-1. 金融逻辑：剥离创业板指数系统性涨跌，聚焦选股 Alpha。
-2. 创业板适配性：必需。创业板 beta 共振强。
-3. 时间稳定性：各阶段都重要。
-4. 横截面有效性：相对指数收益、rolling beta、residual momentum 能改善排序纯度。
-5. 标签一致性：目标就是未来 5 日超额收益，因此特征端缺失相对收益是不完整的。
-6. 泄露风险：rolling beta 只能用历史窗口；不能用未来收益残差。
-7. LightGBM 适配性：相对收益特征更平稳，有利于树模型泛化。
-8. GRU/Transformer 适配性：指数状态序列可作为公共上下文，但当前未实现。
+1. 金融逻辑：剥离创业板系统性 Beta。
+2. 创业板适配性：必需。
+3. 时间稳定性：各市场状态都重要。
+4. 横截面有效性：`excess_ret_*d_mean` 已进入 baseline；`beta_*d` 被归入 advanced。
+5. 标签一致性：非常一致。
+6. 泄露体检：市场当日收益合并后统一 lag1，合格。
+7. LightGBM 适配性：提升泛化。
+8. GRU/Transformer 适配性：适合作公共上下文。
 
 ### 3.8 行业相对类
 
-1. 金融逻辑：剥离行业共同因子，捕捉行业内个股强弱。
-2. 创业板适配性：极强。题材轮动高度行业化。
-3. 时间稳定性：牛市行业扩散强，熊市行业拥挤退潮明显，震荡市轮动频繁。
-4. 横截面有效性：行业内 rank 往往比全市场 rank 更稳定。
-5. 标签一致性：未来 5 日超额收益经常来自行业轮动和行业内扩散。
-6. 泄露风险：行业静态字段低风险；但行业当日均值计算只能用当日截面已知特征。
-7. LightGBM 适配性：行业中性特征能降低模型押注行业。
-8. GRU/Transformer 适配性：可用行业 embedding 或行业内相对序列。
+1. 金融逻辑：剥离行业轮动，捕捉行业内强弱。
+2. 创业板适配性：强。
+3. 时间稳定性：需跨年度验证。
+4. 横截面有效性：`industry_pb_rank`、`industry_turnover_rank`、`industry_neutral_ret_20d` 被推荐。
+5. 标签一致性：合理。
+6. 泄露体检：当日行业截面计算后 lag1，可接受。
+7. LightGBM 适配性：有助于减少押行业。
+8. GRU/Transformer 适配性：建议未来加入行业 embedding。
 
 ### 3.9 时间类
 
-1. 金融逻辑：捕捉日历效应、财报季、节前风险偏好和月末再平衡。
-2. 创业板适配性：中等。情绪市场对节假日前后风险偏好敏感。
-3. 时间稳定性：弱到中等，需验证。
-4. 横截面有效性：单独横截面排序弱，更多作为状态变量。
-5. 标签一致性：对 5 日 horizon 有一定帮助。
-6. 泄露风险：低。
-7. LightGBM 适配性：适合离散分裂。
-8. GRU/Transformer 适配性：适合作位置/日历 embedding。
+1. 金融逻辑：周内、月内、节假日前后效应。
+2. 创业板适配性：中等。
+3. 时间稳定性：弱。
+4. 横截面有效性：时间特征在同一天横截面内通常常数，对 Cross-Sectional 排序帮助弱。
+5. 标签一致性：对 5 日收益可能有状态调节作用。
+6. 泄露体检：低风险，但 `lag1_weekday/month/is_month_end` 的语义是“上一交易日的日历”，对预测 T 日未来收益未必优于当前日历。
+7. LightGBM 适配性：可作为状态变量，但不应进入横截面 baseline 核心。
+8. GRU/Transformer 适配性：更适合做位置/日历 embedding。
 
 ### 3.10 技术指标类
 
-1. 金融逻辑：用非线性方式表达趋势、超买超卖、突破和波动通道。
-2. 创业板适配性：强，但必须防过拟合。
-3. 时间稳定性：RSI 在震荡市更有效，MACD 在趋势市更有效，ATR 在高波动期更重要。
-4. 横截面有效性：单一指标不稳定，组合状态更有效。
-5. 标签一致性：与 5 日收益高度匹配，尤其 RSI、MACD、ATR。
-6. 泄露风险：rolling 与 EMA 必须按个股历史计算；当前未实现。
-7. LightGBM 适配性：强，但冗余大。
-8. GRU/Transformer 适配性：若已有原始序列，过多技术指标反而重复；可少量保留状态摘要。
+1. 金融逻辑：趋势、超买超卖、突破。
+2. 创业板适配性：强。
+3. 时间稳定性：依赖行情状态。
+4. 横截面有效性：多被归入 advanced。
+5. 标签一致性：与 5 日收益匹配。
+6. 泄露体检：EMA/rolling 分组计算后 lag1，基本合格。
+7. LightGBM 适配性：强但冗余大。
+8. GRU/Transformer 适配性：若序列模型已有原始量价，技术指标应剪枝。
+
+### 3.11 涨跌停状态与距离类
+
+1. 金融逻辑：20% 涨跌停边界刻画情绪压力、不可交易风险和资金封板强度。
+2. 创业板适配性：极强，是区别主板的重要制度因子。
+3. 时间稳定性：题材行情中有效，退潮期风险极高。
+4. 横截面有效性：`is_limit_up/down` 稀疏，被验证逻辑 drop；`dist_to_limit_up/down` 保留为 advanced。
+5. 标签一致性：与未来 5 日收益有合理关系。
+6. 泄露体检：由 Agent 3 状态字段合并，派生后 lag1，合格。
+7. LightGBM 适配性：距离连续变量比稀疏布尔变量更友好。
+8. GRU/Transformer 适配性：适合捕捉涨停边界附近的路径依赖。
+
+关键批判：相关性表显示 `lag1_ret_1d` 与 `lag1_dist_to_limit_up` 相关 -0.99998，与 `lag1_dist_to_limit_down` 相关 0.99997。这不是普通共线，而是几乎同一变量的重参数化。原因是创业板普通股票涨跌停价格近似由 `pre_close * (1 ± limit_ratio)` 决定，`dist_to_limit_up = limit_up_price / close - 1` 基本是当日收益的单调函数。距离特征仍有制度解释价值，但在建模中必须与 `ret_1d` 剪枝或改造为更有增量信息的 `limit_position`、`is_near_limit_up`、`distance_bucket`、`touch/open_break`。
 
 ## 4. 特征冗余、多重共线性与因子拥挤度分析
 
-### 4.1 经典冗余剖析
+### 4.1 已观测的强共线结构
 
-当前系统尚未实现 `MA5`、`MA10`、`EMA`、`MACD`，但实验手册要求后续构造这些技术指标。必须提前警惕：
+当前 `feature_correlation_top.csv` 暴露了多组高度相关特征：
 
-- `MA5`、`MA10`、`MA20` 本质是价格低通滤波，彼此高度相关。
-- `EMA12`、`EMA26` 与 MA 特征共用价格趋势信息。
-- `MACD DIF = EMA12 - EMA26`，DEA 又是 DIF 的 EMA，MACD 柱继续派生，三者内部强共线。
-- `ret_5d_mean` 与 `close / MA5 - 1` 高度同源。
+```text
+lag1_ret_1d vs lag1_dist_to_limit_up: -0.99998
+lag1_ret_1d vs lag1_dist_to_limit_down: 0.99997
+lag1_large_order_imbalance vs lag1_main_mf_strength: 0.99405
+lag1_ret_5d vs lag1_ret_5d_mean: 0.99205
+lag1_ret_20d vs lag1_ret_20d_mean: 0.98629
+lag1_amount_5d_mean vs lag1_amount_10d_mean: 0.98557
+lag1_price_to_ma20 vs lag1_bollinger_z_20d: 0.93985
+lag1_macd_diff vs lag1_macd_dea: 0.92486
+```
 
-危害是：线性模型系数不稳定；树模型重要性被同源特征分摊，解释失真；深度学习模型会在有限样本下记忆技术指标噪声。
+这是新系统的主要代价：覆盖面大幅增强后，同源特征也显著堆叠。
 
 ### 4.2 模型抵抗力测试
 
-LightGBM 的 feature subsampling 可以缓解部分共线性，但不能消除共线因子的虚假稳定性。若同一信号被复制成多个窗口和指标，模型在验证集可能表现更稳，却只是押注同一历史模式。
+LightGBM 可以通过特征子采样部分缓解共线性，但不能解决解释层和因子拥挤问题。相关特征会互相替代，导致 feature importance 不稳定，且容易把同一 Alpha 重复计权。
 
-GRU/Transformer 更危险。深度模型对冗余输入的容量更大，若训练样本只覆盖 20250506 至 20260518，模型很容易记住 2025-2026 的局部市场风格，尤其是题材行情、资金流异常、特定行业周期。
+GRU/Transformer 对冗余更敏感。当前短窗口验证产物只有 251 个交易日、116 只股票、约 2.47 万行，因此不能用它直接评价深度模型的最终容量上限。正式开跑若用 `20160104-20260525` 全历史重建，样本规模会提升到约 25 万行量级；但 81 个高共线特征直接输入仍然需要剪枝、分组 dropout 或低维投影，问题核心是共线和泛化，而不是原始数据覆盖不足。
 
 ### 4.3 因子剪枝决策
 
-建议删除或暂不进入 baseline：
+建议删除或只保留一个：
 
 ```text
-total_mv 原始值
-circ_mv 原始值
-net_mf_amount 原始值
-buy_lg_amount 原始值
-sell_lg_amount 原始值
-amount_{w}d_mean 原始值
-高度重复的 MA/EMA 全套裸指标
+lag1_dist_to_limit_up / lag1_dist_to_limit_down 与 lag1_ret_1d 不可同时高权重使用
+lag1_large_order_imbalance / lag1_main_mf_strength 二选一
+lag1_ret_5d / lag1_ret_5d_mean 二选一
+lag1_ret_20d / lag1_ret_20d_mean 二选一
+amount_5d/10d/20d/60d_mean 保留 20d 或 60d，并改为 log 或 z-score
+macd_diff / macd_dea / macd_hist 最多保留 hist 或 diff
+price_to_ma20 / bollinger_z_20d 二选一
 ```
 
-建议保留但必须改造：
+建议保留：
 
 ```text
-ret_1d
-ret_5d_mean / ret_20d_mean / ret_60d_mean
-ret_5d_std / ret_20d_std / ret_60d_std
-turnover_rate / turnover_rate_f
-volume_ratio
-pe_ttm / pb / ps_ttm
+lag1_ret_1d
+lag1_ret_20d_mean 或 lag1_excess_ret_20d_mean
+lag1_ret_20d_std / lag1_ret_60d_std
+lag1_turnover_5d_mean / lag1_turnover_60d_mean
+lag1_net_mf_strength_20d_mean
+lag1_log_circ_mv
+lag1_industry_neutral_ret_20d
+lag1_industry_turnover_rank
+lag1_pb_winsor 或 lag1_industry_pb_rank
 ```
 
-建议通过比例化、标准化或降维合并：
+建议改造：
 
 ```text
-log_total_mv = log1p(total_mv)
-log_circ_mv = log1p(circ_mv)
-net_mf_amount_to_amount = net_mf_amount / amount
-large_order_imbalance = (buy_lg_amount - sell_lg_amount) / amount
-amount_z_20d = amount / rolling_mean(amount,20) - 1
-trend_pca_1 = PCA(ret_5d_mean, ret_10d_mean, ret_20d_mean, close/MA20-1)
-vol_pca_1 = PCA(ret_5d_std, ret_10d_std, ret_20d_std, ATR)
+dist_to_limit_* -> near_limit flags / limit_position / distance_bucket
+amount_*d_mean -> amount_log_*d_mean 或 amount_z_*d
+regime analysis -> 用历史指数收益/波动定义市场状态，而非未来标签均值
 ```
 
 ## 5. 创业板特有 Alpha 漏失与深度挖掘
 
-### 5.1 隐藏 Alpha 盘点
+### 5.1 当前覆盖度
 
-当前系统覆盖度较低：
+当前已经覆盖：
 
-- 情绪 Alpha：仅通过收益、波动、量能间接覆盖；缺少涨跌停、连板、长上影、冲高回落、炸板等情绪结构。
-- 资金流 Alpha：有原始 moneyflow 字段，但缺少比例化、持续性和异常值处理。
-- 波动率 Alpha：有 rolling std，但缺少 ATR、振幅、真实波幅、波动突破和波动收缩后扩张。
-- 小市值 Alpha：有市值字段，但未 log、未中性化、未分位化。
-- 20% 涨跌停 Alpha：状态层已经识别 `is_limit_up`、`is_limit_down`，但 Agent 4 未将其注入特征。
-- 高换手持续性：缺失。
-- 题材轮动：缺少行业相对特征、行业动量、行业资金流强度。
+- 20% 涨跌停制度状态：`is_limit_up/down`、`has_price_limit`、`limit_ratio`。
+- 涨跌停距离：`dist_to_limit_up/down`。
+- 高换手持续性：`turnover_*d_mean/std`。
+- 资金流强度：`net_mf_amount_to_amount`、`main_mf_strength`、`net_mf_strength_*d_mean`。
+- 题材/行业轮动代理：行业收益均值、行业中性收益、行业内 rank。
+- 波动/情绪冲击：amplitude、shadow、close_position、Bollinger。
+- 技术动量反转：RSI、MACD、均线比。
 
-### 5.2 致命盲区
+### 5.2 仍然缺失的关键 Alpha
 
-当前缺失以下创业板特有因子：
+当前仍缺少：
 
 ```text
-limit_up_touch / limit_down_touch：是否触及涨跌停边界
-limit_up_close：是否收于涨停
-limit_open_break：涨停打开或炸板代理
-distance_to_limit_up / distance_to_limit_down：距离涨跌停边界
-turnover_persistence_3d/5d：高换手持续性
-moneyflow_strength：净流入占成交额
-large_order_imbalance：大单买卖不平衡
-ret_minus_benchmark_1d/5d/20d：相对创业板指数动量
-rolling_beta_20d/60d：创业板 beta 暴露
-industry_ret_rank / industry_turnover_rank：行业内相对强弱
-amplitude、upper_shadow、lower_shadow、close_position：K 线结构
-gap_open：隔夜跳空
-drawdown_20d、new_high_20d：趋势位置
+limit_up_touch / limit_down_touch：盘中触及涨跌停
+limit_open_break：炸板或打开涨跌停
+consecutive_limit_up：连板/连续极端涨幅
+near_limit_up_bucket：接近涨停但未封板的分桶状态
+limit_position = (close - limit_down_price) / (limit_up_price - limit_down_price)
+max_drawdown_20d / new_high_20d：趋势位置
+turnover_acceleration：换手加速度
+industry_moneyflow_strength：行业资金流强度
+transaction_cost_proxy：成交额约束下的冲击成本代理
 ```
 
-盘口订单流不平衡、逐笔成交方向、买卖队列深度、委托撤单率等更高频微观结构 Alpha 当前数据源未提供，但报告中应明确为未来生产化方向。
+如果原始 daily 只有 OHLCV，无法真实判断盘中触及涨停但未收涨停时的封单/炸板细节；但 `high >= limit_up_price` 可以构造粗粒度 touch 代理。
 
 ## 6. 特征系统致命问题与冷酷批判
 
-### 6.1 看似有效但当前是噪声的特征
+### 6.1 已修复的致命漏洞
 
-`net_mf_amount`、`buy_lg_amount`、`sell_lg_amount` 以原始金额进入模型，极可能主要表达市值与成交额规模，而不是资金流强度。对于创业板选股，原始金额越大并不等于资金行为越强；大市值权重股天然金额大，小市值题材股金额小但边际冲击强。
+第一次审计中最严厉的两个问题已经修复：
 
-`total_mv`、`circ_mv` 原始值同样危险。它们会让 LightGBM 轻易切出规模桶，产生看似稳定的风格收益，但一旦市场从小盘风格切换到大盘成长，回测净值会失真。
+1. 特征统一 lag1：dataset 中除 ID 和 label 外没有裸当日特征列。
+2. benchmark future return 已用 `horizon` 参数化，不再固定 5 日。
 
-### 6.2 增量更新中极易过拟合的特征
+这两点使当前 mart 从“不能直接信任的 baseline”提升为“可以进入因子研究和 baseline 训练”的状态。
 
-当前 `configs/features.yaml` 声明了 `cache_dir`，但 Agent 4 未真正使用 rolling feature cache。每次在输入窗口上重算 rolling，且起始窗口可能截断历史，导致边界特征随 start_date 改变。如果生产中按增量窗口构建，`ret_60d_mean` 和 `ret_60d_std` 在窗口开头会因 `min_periods=30` 和历史不足而不稳定。
+### 6.2 新暴露的问题
 
-### 6.3 回测净值虚高的元凶
+第一，涨跌停距离与 `ret_1d` 近乎完全共线。当前距离因子有制度解释，但信息增量极低，直接进入模型会造成重复计权。
 
-最危险的是时间边界语义不清。实验手册明确要求所有用于 T 日预测的特征最终统一 `shift(1)`。当前 Agent 4 的 `ret_1d`、rolling return、成交额、资金流、估值、市值均使用当日字段直接输出。如果后续模型或回测将 `trade_date = T` 的特征解释为 T 日开盘前可用，回测会使用 T 日收盘后信息预测 T 至 T+5 的收益，形成严重泄露。
+第二，因子验证的 regime 划分使用 `label_rel_return` 的日均值做代理。这是典型事后分层，适合解释“这些因子在最终表现好的日子/差的日子怎样”，但不能宣称为可实时识别的牛熊震荡市场状态。生产化 regime 必须用 T 日以前可得的指数收益、波动率、成交额和宽基状态定义。
 
-其次，`validate_no_future_leakage()` 只是用正则扫描 `.shift(-数字)`，且允许包含 `future_return` 的上下文。它不能检测：
+第三，rolling feature cache 仍未真正启用。`features.yaml` 有 `cache_dir`，但 `agent.py` 仍在当前输入窗口内重算 rolling。若增量窗口不足 60 日，长窗口特征在边界会漂移。
 
-- 特征是否统一滞后。
-- 当日盘后字段是否被误用于盘前交易。
-- benchmark 是否与 horizon 一致。
-- 截面标准化是否使用未来全局分布。
-- rolling 是否因截断历史造成边界偏差。
+第四，当前验证产物是短窗口 smoke-test。251 个交易日只说明本次 mart 构建窗口较短，不是数据中台能力缺陷。正式实验前必须以 `20160104-20260525` 全历史窗口重建 mart，并在全历史上重跑 IC、RankIC、分层和 regime 稳健性；在此之前，当前 RankIC/long-short 只能视为修正验证结果，不能作为最终因子有效性结论。
 
-该检查当前返回 PASS 不能证明无未来函数。
+第五，特征推荐逻辑偏向“样本内分层收益”。例如 `lag1_amount_60d_mean`、`lag1_turnover_60d_mean` 强势进入 baseline，但它们可能是规模、流动性和市场阶段的混合暴露，需要行业/市值中性后的二次验证。
 
-第三，`read_benchmark()` 中 `benchmark_future_return` 固定使用 `shift(-5)`，而 `add_labels()` 的个股收益使用配置 `horizon`。如果未来把 `default_horizon` 改为 1、10 或 20，标签会变成“个股 h 日收益减创业板 5 日收益”，这是静默错误。
+### 6.3 回测净值虚高风险剩余项
+
+统一 lag1 已经消除了最大时间边界风险，但后续回测仍必须防止：
+
+- 使用不可买入的涨停股作为 T+1 成交对象。
+- 不扣交易成本和冲击成本。
+- 用同一测试期反复调特征推荐阈值。
+- 用 `outputs/factor_validation` 的全样本推荐结果反向决定训练期特征，再报告同一时期测试表现。
 
 ## 7. 增量流水线高优先级改进提案
 
 ### Priority A：必须立刻重构
 
-1. 统一特征可得性与滞后机制  
-金融逻辑：保证 T 日特征只用于 T+1 之后交易。  
-工程成本：低到中，按 `ts_code` 对所有特征列执行配置化 lag。  
-预期收益：极高，直接消除回测骗局风险。  
-LightGBM 帮助：提升验证可信度。  
-Transformer 帮助：明确序列窗口右边界。  
-课程展示吸睛度：高，可展示严谨防泄露设计。
+1. 引入 rolling feature cache  
+金融逻辑：保证增量更新与全量回放特征一致。  
+工程成本：中。  
+预期收益：极高，解决 20/60 日窗口边界漂移。  
+LightGBM 帮助：稳定特征分布。  
+Transformer 帮助：序列样本右边界一致。  
+课程展示吸睛度：高，体现工业级增量中台。
 
-2. 修正 benchmark horizon  
-金融逻辑：相对收益必须同 horizon。  
-工程成本：低，将 `read_benchmark(..., horizon)` 参数化。  
-预期收益：高，避免未来实验静默错标。  
-LightGBM/Transformer 帮助：标签一致性提升。  
-课程展示吸睛度：中，但非常专业。
-
-3. 资金流比例化与市值 log 化  
-金融逻辑：把资金行为从规模噪声中剥离。  
+2. 改造涨跌停距离特征  
+金融逻辑：从“收益重参数化”变成“制度边界状态”。  
 工程成本：低。  
 预期收益：高。  
-LightGBM 帮助：减少粗暴规模切分。  
-Transformer 帮助：输入更平稳。  
-课程展示吸睛度：高，贴合创业板资金驱动。
+建议新增：`limit_position`、`near_limit_up_2pct`、`near_limit_down_2pct`、`limit_touch_up`、`limit_touch_down`。  
+LightGBM 帮助：减少共线重复切分。  
+Transformer 帮助：更好表达边界状态。
 
-4. 注入状态层涨跌停特征  
-金融逻辑：20% 涨跌停是创业板最关键制度变量。  
-工程成本：中，读取 state 层字段并合并。  
+3. 修正 regime 定义  
+金融逻辑：市场状态必须由历史可得信息定义。  
+工程成本：低到中。  
 预期收益：高。  
-LightGBM 帮助：识别不可交易和情绪极端状态。  
-Transformer 帮助：序列中可学习涨停后的扩散或衰竭。  
-课程展示吸睛度：极高。
+建议：用创业板指数过去 20/60 日收益、20 日波动率、成交额分位划分 bull/bear/sideways/high-vol。  
+课程展示吸睛度：高，能避免“事后解释伪装预测”。
 
 ### Priority B：强烈建议拓展
 
-1. 行业相对特征：行业内收益 rank、行业内换手 rank、行业内估值 z-score。  
-2. 市场相对特征：`ret_1d - benchmark_ret_1d`、`ret_5d_mean - benchmark_ret_5d_mean`、rolling beta。  
-3. K 线结构特征：amplitude、close_position、upper_shadow、lower_shadow、gap_open。  
-4. 高换手持续性：`turnover_5d_mean`、`turnover_5d_std`、`turnover_acceleration`。  
-5. 缺失值指示器与 winsorize：尤其 PE、PB、资金流。
+1. 行业资金流强度：行业内资金流均值、rank、行业资金扩散。  
+2. 交易成本代理：成交额分位、预期换手成本、不可成交状态。  
+3. 特征中性化验证：对规模、行业、流动性做残差化后再算 IC。  
+4. 训练/验证/测试分期推荐：只用训练期做 feature recommendation，再在验证/测试期评价。
 
 ### Priority C：探索性研究增强
 
-1. 题材轮动代理：行业动量扩散、行业资金流强度、行业拥挤度。  
-2. 新闻文本情绪：利用 `news/` 作为高阶特征，但须严格按发布时间截断。  
-3. Cross-sectional Transformer：同日股票间注意力建模行业和资金扩散。  
-4. 风险调整标签：`future_excess_return / future_volatility`，用于稳健排序。
+1. 新闻文本情绪与题材热度，但必须按发布时间截断。  
+2. Cross-sectional Transformer 建模同日股票关系。  
+3. 多任务标签：收益、上涨概率、极端回撤风险联合学习。
 
 ## 8. 面向最终实验的工业级特征推荐方案
 
 ### 8.1 Baseline 集合：适用于 LightGBM
 
-目标：截面单调性、高鲁棒性、抗过拟合、低泄露风险。
+建议使用“稳健、低冗余、可解释”的子集：
 
 ```text
-ID:
-  trade_date, ts_code
-
 Momentum:
   lag1_ret_1d
-  lag1_ret_5d_mean
-  lag1_ret_20d_mean
+  lag1_excess_ret_20d_mean
   lag1_ret_60d_mean
-  lag1_excess_ret_1d
-  lag1_excess_ret_5d
 
 Volatility:
-  lag1_ret_5d_std
   lag1_ret_20d_std
   lag1_ret_60d_std
   lag1_amplitude
-  lag1_atr_14
 
 Liquidity:
-  lag1_turnover_rate
-  lag1_turnover_rate_f
   lag1_volume_ratio
-  lag1_amount_log
-  lag1_amount_z_20d
   lag1_turnover_5d_mean
+  lag1_turnover_60d_mean
+  lag1_vol_log
 
 Moneyflow:
   lag1_net_mf_amount_to_amount
-  lag1_net_mf_vol_to_vol
-  lag1_large_order_imbalance
-  lag1_moneyflow_5d_sum_to_amount
+  lag1_net_mf_strength_20d_mean
 
 Valuation/Size:
-  lag1_log_total_mv
   lag1_log_circ_mv
-  lag1_pe_ttm_winsor
   lag1_pb_winsor
-  lag1_ps_ttm_winsor
+  lag1_industry_pb_rank
 
-Market/Industry Relative:
-  lag1_beta_20d
-  lag1_residual_ret_20d
-  lag1_industry_ret_rank_5d
+Industry Relative:
   lag1_industry_turnover_rank
-  lag1_industry_valuation_z
+  lag1_industry_neutral_ret_20d
 
-Limit/Tradability:
-  lag1_is_limit_up
-  lag1_is_limit_down
-  lag1_distance_to_limit_up
-  lag1_distance_to_limit_down
-
-Time:
-  weekday
-  month
-  is_month_end_window
+Limit/State:
+  lag1_listed_trading_days
+  near-limit 改造后特征，而不是直接同时放入 ret_1d 与 dist_to_limit_*
 ```
 
 ### 8.2 Advanced 集合：适用于 GRU / Transformer
 
-目标：时序平稳性、长程依赖表达、微观量价路径。
-
-序列长度建议：20 或 60 个交易日。
+建议把 Advanced 分成“逐日序列变量”和“静态/慢变量”：
 
 ```text
-Per-day sequence features:
-  ret_1d
-  excess_ret_1d
-  intraday_range
-  close_position
-  gap_open
-  turnover_rate
-  volume_ratio
-  amount_log_z
-  net_mf_amount_to_amount
-  large_order_imbalance
-  is_limit_up
-  is_limit_down
-  distance_to_limit_up
-  distance_to_limit_down
-  benchmark_ret_1d
-  industry_ret_1d
-  industry_moneyflow_strength
+Per-day sequence:
+  lag1_ret_1d
+  lag1_excess_ret_1d
+  lag1_amplitude
+  lag1_close_position
+  lag1_gap_open
+  lag1_turnover_rate
+  lag1_volume_ratio
+  lag1_net_mf_amount_to_amount
+  lag1_large_order_imbalance
+  lag1_rsi_14d
+  lag1_macd_hist
+  lag1_bollinger_z_20d
+  lag1_limit_position or near-limit bucket
 
-Static/context features:
-  log_total_mv
-  log_circ_mv
-  industry_id
-  market_board
-  listed_days_bucket
+Static/context:
+  lag1_log_circ_mv
+  lag1_pb_winsor
+  industry_id embedding
+  lag1_beta_20d
+  lag1_listed_trading_days
 ```
 
 ### 8.3 最终裁决组合
 
-保留：
+明确保留：
 
 ```text
-ret_1d
-ret_5d_mean / ret_20d_mean / ret_60d_mean
-ret_5d_std / ret_20d_std / ret_60d_std
-amount_log
-vol_log
-turnover_rate
-turnover_rate_f
-volume_ratio
-pe_ttm / pb / ps_ttm
+lag1_ 统一特征机制
+资金流比例化特征
+log 市值
+winsor 估值
+市场相对收益与 beta/residual
+行业中性和行业 rank
+高换手持续性
+K 线结构
+RSI/MACD/Bollinger 的精选摘要
 ```
 
-删除或替换：
+明确删除或降级：
 
 ```text
-total_mv -> log_total_mv
-circ_mv -> log_circ_mv
-net_mf_amount -> net_mf_amount_to_amount
-net_mf_vol -> net_mf_vol_to_vol
-buy_lg_amount / sell_lg_amount -> large_order_imbalance
-amount_{w}d_mean -> amount_z_{w}d or amount_log_{w}d_mean
+lag1_is_limit_up / lag1_is_limit_down：低变异，当前验证已 drop
+lag1_has_price_limit / lag1_limit_ratio：对创业板池几乎常数，当前验证已 drop
+lag1_is_month_end：低变异，当前验证已 drop
+dist_to_limit_up/down 与 ret_1d 同时使用：必须二选一或改造
+重复 amount 多窗口：保留一个长窗口和一个短窗口即可
 ```
 
-新增：
+明确新增：
 
 ```text
-feature_lag_1d 统一机制
-benchmark horizon 参数化
-market relative return
-rolling beta / residual momentum
-industry relative rank
-limit-up/limit-down state features
-K-line morphology
-turnover persistence
-moneyflow persistence
-technical summary: RSI14, MACD_hist, ATR14, Bollinger_position
+rolling cache
+limit_position
+limit_touch_up/down
+near_limit_up/down buckets
+历史可得 regime definition
+行业资金流强度
+交易成本/流动性冲击代理
+train-only feature recommendation protocol
 ```
 
 ## 9. 因子研究实验设计
 
 ### 9.1 横截面 IC 与 RankIC
 
-对每个特征 `f`，在每个交易日 `t` 的创业板可交易股票池内计算：
+当前 `pipelines/mart/validation.py` 已实现：
 
 ```text
-IC_t(f) = corr(f_{i,t}, y_{i,t})
-RankIC_t(f) = spearman_rank_corr(f_{i,t}, y_{i,t})
+daily IC
+daily RankIC
+IC mean/std/t-stat
+RankIC mean/std/t-stat
+positive_rank_ic_ratio
+avg_cross_section
 ```
 
-其中 `y` 使用未来 5 日超额收益 `label_rel_return`。输出：
+这满足基础闭环。下一步必须加：
 
 ```text
-IC mean
-IC std
-ICIR = mean / std
-IC positive ratio
-RankIC mean
-RankIC t-stat
-monthly/yearly IC breakdown
+训练期 IC、验证期 IC、测试期 IC 分离
+行业中性后 IC
+市值中性后 IC
+流动性中性后 IC
 ```
-
-必须按时间滚动评估，不允许随机打散。
 
 ### 9.2 分层绩效
 
-每日按特征值排序分 5 或 10 组：
+当前已实现 5 分位 long-short，并输出收益、t-stat、胜率、最大回撤。该设计合理，但需补充：
 
 ```text
-Q1: lowest feature group
-...
-Q5/Q10: highest feature group
-Long-Short = top quantile - bottom quantile
+Top minus Bottom 的交易成本扣减
+分位单调性检验
+分年度/分市场状态分层收益
+换手率估计
+不可交易股票剔除后的真实可买性
 ```
-
-输出：
-
-```text
-各分位平均未来 5 日超额收益
-分位收益单调性
-Long-Short 年化收益
-Long-Short Sharpe
-Long-Short Max Drawdown
-换手率
-交易成本敏感性
-```
-
-对于资金流、动量、波动率，需额外做方向分组。例如高波动不预设正负，而是分位观察。
 
 ### 9.3 稳健性检验
 
-时间分段：
+当前已实现 regime IC，但 regime 定义使用未来标签均值，不适合作为预测可得市场状态。应改为：
 
 ```text
-牛市或上行段：指数 60 日收益显著为正
-熊市或下行段：指数 60 日收益显著为负
-震荡市：指数收益绝对值低但波动高
+benchmark_ret_20d > 上分位：bull
+benchmark_ret_20d < 下分位：bear
+abs(benchmark_ret_20d) 低且 vol 高：sideways/high-vol
+benchmark_vol_20d 高分位：high_vol
 ```
 
-每段分别计算 IC、RankIC、分层收益和回撤。若某因子只在单一市场状态有效，必须标注为状态条件因子。
-
-行业中性化：
-
-```text
-f_neutral = f - industry_mean(f)
-或对 f 回归 industry dummies 后取 residual
-```
-
-比较中性化前后 IC。如果 IC 大幅下降，说明因子主要押注行业轮动；如果中性化后仍有效，说明具备个股 Alpha。
+所有 regime 变量必须在 T 日或 T-1 日可得。
 
 ### 9.4 模型黑盒解密
 
-LightGBM 训练后输出：
+建议在 LightGBM 训练后加入：
 
 ```text
-gain importance
-split importance
-permutation importance
-by-year importance stability
+gain/split/permutation importance
+SHAP summary
+按年份/月份的重要性稳定性
+对 Top-K 入选股票做 SHAP waterfall
+资金流 × 换手、动量 × 涨跌停距离的 SHAP interaction
 ```
 
-SHAP 归因实验：
-
-```text
-全样本 SHAP summary
-牛/熊/震荡分段 SHAP
-Top-K 入选股票 SHAP waterfall
-资金流、换手、涨跌停特征的 SHAP interaction
-```
-
-若 `total_mv`、`amount`、`net_mf_amount` 等原始规模特征长期占据最高重要性，应判定模型可能在学习规模和流动性风格，而非真实资金流 Alpha。
+若 SHAP 显示 `amount_*`、`turnover_*`、`log_circ_mv` 长期垄断贡献，则模型可能是在交易流动性风格，而不是纯选股 Alpha。
 
 ## 10. 深度总结：中台系统价值判定
 
-当前 Agent 4 的工程价值高于研究价值。它已经把 raw lake、SCD2 动态股票池、security state 和数据集市串成闭环，说明项目正在从脚本实验走向可审计流水线，这是很重要的生产化基础。
+当前 Agent 4 已经具备严肃研究价值。它不再只是把行情、估值、资金流拼在一起，而是将创业板关键生态变量系统性注入：高换手、资金流强度、小市值、市场相对收益、行业相对强弱、技术趋势反转、20% 涨跌停状态与距离。
 
-但是，从创业板量化选股研究角度看，当前特征体系还远未达到“面向 399006.SZ 微观生态适配”的标准。它缺少创业板最关键的 20% 涨跌停结构、资金流强度、高换手持续性、题材行业轮动、市场相对 beta、行业相对排序和 K 线冲击结构。现有特征多为通用日频字段，无法充分表达创业板高波动、高换手、游资主导、情绪驱动和动量反转共存的核心机制。
+从量化架构看，统一 `lag1_` 输出、horizon 参数化、状态层注入、因子验证闭环，是非常关键的工业化进步。尤其是 dataset 中已经没有裸当日特征列，这一点使后续 LightGBM baseline 的可信度大幅提高。
 
-更严厉地说，当前系统最危险的问题不是特征少，而是“看起来通过了防泄露检查”。`future_leakage_check: PASS` 只能证明代码中没有未授权的 `shift(-n)` 字面模式，不能证明特征在交易时间边界上可用。若后续回测没有严格定义 T 日收盘后出信号、T+1 成交，当前未滞后的特征会直接制造虚高净值。
+但从顶级量化生产标准看，系统还不能宣布完成。它现在的主要问题已经从“硬泄露风险”转向“复杂特征系统治理”：高共线、当前验证产物尚未全历史重建、验证推荐可能样本内过拟合、regime 口径事后化、rolling cache 未启用、涨跌停距离信息增量不足。
 
 最终判定：
 
 ```text
-量化架构价值：中高，数据链路和动态股票池基础正确。
-金融微观结构适配：偏低，创业板专属 Alpha 覆盖不足。
-机器学习泛化性：中低，特征少且原始规模噪声重。
-风险控制严谨性：中低，状态层强，但特征层时间边界和标签一致性仍有硬伤。
-生产价值：可作为 baseline mart，不可直接作为最终研究特征体系。
-研究价值：需要完成 Priority A 和 Priority B 后，才具备严肃因子研究价值。
+量化架构价值：高。Agent 4 已形成可审计数据集市和因子验证闭环。
+金融微观结构适配：中高。创业板高换手、资金流、涨跌停、行业轮动已有覆盖。
+机器学习泛化性：中。特征丰富但共线严重；当前短窗口验证不能替代正式全历史验证。
+风险控制严谨性：中高。lag1 和 horizon 已修复，但 regime 和增量 rolling 仍需治理。
+生产价值：可作为课程最终 baseline 和 LightGBM 训练输入；暂不建议作为无修剪的实盘特征池。
+研究价值：已经具备严肃因子研究价值，但必须先全历史重建 mart，再追加 train-only 推荐、跨期稳定性和中性化检验。
 ```
 
-本报告建议把 Agent 4 的下一阶段目标从“跑通 dataset”升级为“可证明无泄露、可解释、创业板特化、可做 IC 闭环验证的研究级特征中台”。只有这样，LightGBM 的结果才不会是规模噪声和时间泄露的幻觉，GRU/Transformer 的展示也才不会沦为复杂模型记忆短样本市场风格。
+一句冷酷结论：这次修正把 Agent 4 从“可能制造漂亮回测的危险 baseline”推进到了“值得认真研究的创业板特征中台”；下一步不要继续堆特征，而要做剪枝、中性化、增量一致性和真实交易约束。
