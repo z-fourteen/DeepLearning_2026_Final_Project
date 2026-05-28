@@ -129,8 +129,36 @@ Top-K proxy interpretation:
 - Test split keeps positive spread at K=20/30, but the magnitude and IR are weak; K=10 is negative.
 - Decile monotonicity is not clean, so the current signal is useful as a model-level ranking baseline but not yet strong enough to claim robust tradable portfolio value.
 
+## Top-K Backtest
+- Evaluation script: `scripts/backtest_topk.py`
+- Input files:
+  - `outputs/runs/e02_gru_l20_mse_ic_02/predictions.parquet`
+  - `data/mart/labels/labels_v20260526.parquet`
+- Output files:
+  - `outputs/runs/e02_gru_l20_mse_ic_02/backtest_metrics.json`
+  - `outputs/runs/e02_gru_l20_mse_ic_02/backtest_periods.csv`
+- Method: non-overlapping 5-day holding-period proxy using label-side `future_return`.
+- Rebalance stride: 5 signal dates.
+- Cost model: equal-weight Top-K turnover multiplied by one-way cost bps.
+- Main comparison below uses 10 bps one-way cost.
+
+| Split | K | Periods | Top-K annualized | Top-K cumulative | Max drawdown | Excess vs benchmark annualized | Excess vs universe annualized | Long-short annualized | Avg turnover |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| validation | 10 | 97 | -0.0910 | -0.1678 | -0.4999 | -0.0184 | 0.0512 | 0.0195 | 0.7732 |
+| validation | 20 | 97 | -0.1498 | -0.2683 | -0.5120 | -0.0810 | -0.0157 | 0.0019 | 0.7577 |
+| validation | 30 | 97 | -0.1268 | -0.2296 | -0.4603 | -0.0555 | 0.0117 | 0.0818 | 0.7409 |
+| test | 10 | 66 | 0.2537 | 0.3446 | -0.2455 | -0.2475 | -0.1420 | -0.1728 | 0.8394 |
+| test | 20 | 66 | 0.3344 | 0.4590 | -0.2122 | -0.1957 | -0.0851 | 0.0930 | 0.7818 |
+| test | 30 | 66 | 0.4591 | 0.6401 | -0.2080 | -0.1177 | 0.0020 | 0.1501 | 0.7152 |
+
+Backtest interpretation:
+- Test Top30 is the strongest setting: annualized return is approximately 45.9% after 10 bps cost, roughly flat versus the equal-weight universe, and long-short annualized return is positive.
+- The strategy still underperforms the benchmark on test, because the 2025-2026 test window is a strong benchmark period.
+- Validation is weak in absolute return, but Top10/Top30 are slightly positive versus the equal-weight universe.
+- The current GRU signal is therefore a valid model-level baseline with some portfolio value, but it is not yet a robust standalone trading strategy.
+
 ## Assessment
-This is the frozen current GRU baseline. It replaces the earlier pure-regression E01 as the main GRU result, while the stable variant is retained only as an ablation. The date-aware MSE+IC objective aligns training with the daily cross-section RankIC evaluation target, avoids checkpoint-level prediction collapse, and keeps full validation/test daily coverage. The signal is positive on both validation and test, with stronger test RankIC than validation RankIC. Top-K proxy results confirm some ranking value, especially around K=20/30, but the weak test spread and non-monotonic deciles mean portfolio-level validation remains the next gate before claiming tradable strategy value.
+This is the frozen current GRU baseline. It replaces the earlier pure-regression E01 as the main GRU result, while the stable variant is retained only as an ablation. The date-aware MSE+IC objective aligns training with the daily cross-section RankIC evaluation target, avoids checkpoint-level prediction collapse, and keeps full validation/test daily coverage. The signal is positive on both validation and test, with stronger test RankIC than validation RankIC. Top-K proxy and non-overlapping 5-day backtest results confirm some ranking value, especially around K=30. However, weak validation returns, non-monotonic deciles, and benchmark underperformance on test mean the current model should be delivered as a model baseline, not as a final tradable strategy.
 
 ## Run Command
 ```bash
@@ -145,6 +173,6 @@ python scripts/train_sequence.py --config configs/sequence_gru_baseline_stable.y
 ```
 
 ## Next Actions
-1. Run a transaction-cost-aware Top-K backtest with t+1 execution and 5-day holding alignment.
-2. Compare Top 10/20/30 against benchmark and equal-weight universe returns.
-3. Consider a small `ic_loss_alpha` sweep only after backtest diagnostics are available.
+1. Add a true daily equity-curve backtest with explicit t+1 execution price when raw executable prices are wired in.
+2. Run GRU lookback=60 and compare IC, Top-K spread, and backtest metrics with the frozen l20 baseline.
+3. Consider a small `ic_loss_alpha` sweep after the l60 comparison.
