@@ -51,6 +51,7 @@ class PredictionHead(nn.Module):
         hidden_dim: int,
         dropout: float = 0.0,
         activation: str = "relu",
+        negative_slope: float = 0.01,
     ):
         super().__init__()
         if input_dim <= 0:
@@ -59,10 +60,13 @@ class PredictionHead(nn.Module):
             raise ValueError(f"hidden_dim must be positive, got {hidden_dim}")
         if not 0.0 <= dropout < 1.0:
             raise ValueError(f"dropout must be in [0, 1), got {dropout}")
+        if negative_slope <= 0.0:
+            raise ValueError(f"negative_slope must be positive, got {negative_slope}")
 
         activations: dict[str, nn.Module] = {
             "relu": nn.ReLU(),
             "gelu": nn.GELU(),
+            "leaky_relu": nn.LeakyReLU(negative_slope=float(negative_slope)),
         }
         if activation not in activations:
             choices = ", ".join(sorted(activations))
