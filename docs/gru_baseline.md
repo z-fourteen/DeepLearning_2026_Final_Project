@@ -1,12 +1,13 @@
 # GRU Baseline - Date-Aware MSE+IC
 
 ## Status
-- Baseline version: current
+- Baseline version: frozen current baseline
 - Model: GRU Baseline
 - Config: `configs/sequence_gru_baseline.yaml`
 - Reference run: `outputs/runs/e02_gru_l20_mse_ic_02/`
 - Recorded date: 2026-05-27
 - Upload policy: local run artifacts are excluded from Git by `.gitignore`.
+- Baseline decision: `e02_gru_l20_mse_ic_02` is the main GRU baseline for the current stage.
 
 ## Data Interface
 - Dataset: sequence NPZ
@@ -54,7 +55,8 @@
 
 ## Stable Variant
 - Config: `configs/sequence_gru_baseline_stable.yaml`
-- Purpose: conservative stability check on top of the current date-aware MSE+IC baseline.
+- Purpose: conservative ablation/stability check on top of the current date-aware MSE+IC baseline.
+- Status: not the main baseline; it is kept only as a stability comparison run.
 - It keeps the same data interface, GRU architecture, date-aware batch mode, and `mse_ic` objective.
 - Conservative changes:
   - Learning rate: 0.0003 -> 0.0002
@@ -73,6 +75,10 @@
 - Best validation RankIC mean: 0.0299640
 - Best validation IC mean: 0.0208654
 - Validation RankIC IR: 0.2013793
+- Recomputed test RankIC mean: 0.0487976
+- Recomputed test IC mean: 0.0259337
+- Recomputed test RankIC IR: 0.3148049
+- Recomputed test ICIR: 0.1630962
 - Stop reason: `metric_early_stop:rank_ic_mean`
 - Prediction-collapse epochs: 0
 - Best daily count: 484 / 484
@@ -101,7 +107,7 @@
   - test: approximately 0.04880 on 329 days
 
 ## Assessment
-This is the current GRU baseline. It replaces the earlier pure-regression E01 and stable variants. The date-aware MSE+IC objective aligns training with the daily cross-section RankIC evaluation target, avoids prediction collapse, and keeps full validation/test daily coverage.
+This is the frozen current GRU baseline. It replaces the earlier pure-regression E01 as the main GRU result, while the stable variant is retained only as an ablation. The date-aware MSE+IC objective aligns training with the daily cross-section RankIC evaluation target, avoids checkpoint-level prediction collapse, and keeps full validation/test daily coverage. The signal is positive on both validation and test, with stronger test RankIC than validation RankIC. It is ready to serve as the model-level baseline, but portfolio-level validation is still required before claiming tradable strategy value.
 
 ## Run Command
 ```bash
@@ -117,4 +123,5 @@ python scripts/train_sequence.py --config configs/sequence_gru_baseline_stable.y
 
 ## Next Actions
 1. Add portfolio-style validation metrics, including top/bottom decile spread and long-short proxy.
-2. Consider a small `ic_loss_alpha` sweep after locking this baseline as the reference.
+2. Run the first Top-K portfolio proxy evaluation on the frozen baseline predictions.
+3. Consider a small `ic_loss_alpha` sweep only after portfolio-level diagnostics are available.
