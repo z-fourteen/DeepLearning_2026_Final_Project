@@ -192,6 +192,9 @@ def run_backtest(
         previous_top: dict[tuple[int, float], dict[str, float] | None] = {
             (k, cost_bps): None for k in k_values for cost_bps in cost_bps_values
         }
+        previous_bottom: dict[tuple[int, float], dict[str, float] | None] = {
+            (k, cost_bps): None for k in k_values for cost_bps in cost_bps_values
+        }
 
         for trade_date in dates:
             group = split_frame[split_frame["trade_date"] == trade_date].sort_values(
@@ -212,14 +215,21 @@ def run_backtest(
                 bottom_return_gross = float(bottom["future_return"].mean())
                 long_short_gross = top_return_gross - bottom_return_gross
                 top_weights = equal_weights(top["ts_code"])
+                bottom_weights = equal_weights(bottom["ts_code"])
 
                 for cost_bps in cost_bps_values:
                     key = (k, cost_bps)
-                    turnover = portfolio_turnover(top_weights, previous_top[key])
+                    top_turnover = portfolio_turnover(top_weights, previous_top[key])
+                    bottom_turnover = portfolio_turnover(bottom_weights, previous_bottom[key])
                     previous_top[key] = top_weights
+                    previous_bottom[key] = bottom_weights
                     cost_rate = cost_bps / 10000.0
-                    transaction_cost = cost_rate * turnover
-                    top_return_net = top_return_gross - transaction_cost
+                    top_transaction_cost = cost_rate * top_turnover
+                    bottom_transaction_cost = cost_rate * bottom_turnover
+                    long_short_transaction_cost = top_transaction_cost + bottom_transaction_cost
+                    top_return_net = top_return_gross - top_transaction_cost
+                    bottom_short_return_net = -bottom_return_gross - bottom_transaction_cost
+                    long_short_net = long_short_gross - long_short_transaction_cost
                     rows.append(
                         {
                             "split": split,
@@ -227,12 +237,20 @@ def run_backtest(
                             "k": int(k),
                             "cost_bps": float(cost_bps),
                             "daily_count": n,
-                            "turnover": turnover,
-                            "transaction_cost": transaction_cost,
+                            "turnover": top_turnover,
+                            "transaction_cost": top_transaction_cost,
+                            "top_turnover": top_turnover,
+                            "bottom_turnover": bottom_turnover,
+                            "long_short_turnover": top_turnover + bottom_turnover,
+                            "top_transaction_cost": top_transaction_cost,
+                            "bottom_transaction_cost": bottom_transaction_cost,
+                            "long_short_transaction_cost": long_short_transaction_cost,
                             "top_return_gross": top_return_gross,
                             "top_return_net": top_return_net,
                             "bottom_return_gross": bottom_return_gross,
+                            "bottom_short_return_net": bottom_short_return_net,
                             "long_short_gross": long_short_gross,
+                            "long_short_net": long_short_net,
                             "benchmark_return": benchmark_return,
                             "universe_equal_return": universe_return,
                             "top_excess_vs_benchmark_net": top_return_net - benchmark_return,
@@ -261,10 +279,18 @@ def build_summary(periods: pd.DataFrame, holding_days: int) -> dict[str, Any]:
                     group["top_excess_vs_universe_net"], periods_per_year
                 ),
                 "long_short_gross": summarize_returns(group["long_short_gross"], periods_per_year),
+                "long_short_net": summarize_returns(group["long_short_net"], periods_per_year),
+                "bottom_short_net": summarize_returns(group["bottom_short_return_net"], periods_per_year),
                 "benchmark": summarize_returns(group["benchmark_return"], periods_per_year),
                 "universe_equal": summarize_returns(group["universe_equal_return"], periods_per_year),
-                "average_turnover": float(group["turnover"].mean()),
-                "average_transaction_cost": float(group["transaction_cost"].mean()),
+                "average_turnover": float(group["top_turnover"].mean()),
+                "average_transaction_cost": float(group["top_transaction_cost"].mean()),
+                "average_top_turnover": float(group["top_turnover"].mean()),
+                "average_bottom_turnover": float(group["bottom_turnover"].mean()),
+                "average_long_short_turnover": float(group["long_short_turnover"].mean()),
+                "average_top_transaction_cost": float(group["top_transaction_cost"].mean()),
+                "average_bottom_transaction_cost": float(group["bottom_transaction_cost"].mean()),
+                "average_long_short_transaction_cost": float(group["long_short_transaction_cost"].mean()),
             }
         summary[str(split)] = split_summary
     return summary
@@ -300,7 +326,7 @@ def main() -> None:
         "rebalance_stride": int(args.rebalance_stride),
         "min_daily_count": int(args.min_daily_count),
         "method": "non_overlapping_holding_period_proxy",
-        "cost_model": "equal-weight long-only top-k turnover multiplied by one-way cost bps",
+        "cost_model": "equal-weight top-k and bottom-k turnover multiplied by one-way cost bps",
         "summary": build_summary(periods, args.holding_days),
     }
 

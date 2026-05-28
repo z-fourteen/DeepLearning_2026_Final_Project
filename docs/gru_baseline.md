@@ -157,8 +157,29 @@ Backtest interpretation:
 - Validation is weak in absolute return, but Top10/Top30 are slightly positive versus the equal-weight universe.
 - The current GRU signal is therefore a valid model-level baseline with some portfolio value, but it is not yet a robust standalone trading strategy.
 
+## Long-Short Backtest
+- Evaluation script: `scripts/backtest_topk.py`
+- Method: buy Top-K and short Bottom-K using the same non-overlapping 5-day holding windows.
+- Cost model: one-way cost applied to both long and short turnover.
+- Main fields: `long_short_net`, `average_long_short_turnover`, `average_long_short_transaction_cost`.
+
+| Split | K | Cost bps | Periods | Long-short annualized | Long-short cumulative | Max drawdown | Win rate | Sharpe-like | Avg LS turnover |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| validation | 10 | 10 | 97 | -0.0734 | -0.1365 | -0.3371 | 0.5155 | -0.3259 | 1.8928 |
+| validation | 20 | 10 | 97 | -0.0829 | -0.1535 | -0.2882 | 0.5052 | -0.4841 | 1.7526 |
+| validation | 30 | 10 | 97 | -0.0021 | -0.0041 | -0.1772 | 0.5258 | -0.0171 | 1.6027 |
+| test | 10 | 10 | 66 | -0.2518 | -0.3160 | -0.3357 | 0.4545 | -0.8865 | 1.9788 |
+| test | 20 | 10 | 66 | 0.0008 | 0.0011 | -0.1568 | 0.5000 | 0.0040 | 1.7500 |
+| test | 30 | 10 | 66 | 0.0652 | 0.0862 | -0.1354 | 0.5000 | 0.4079 | 1.5263 |
+
+Long-short interpretation:
+- Before costs, K=30 has positive long-short performance on both validation and test.
+- After 10 bps one-way cost, validation K=30 is approximately flat and test K=30 remains mildly positive.
+- K=10 fails on test even before costs, confirming that the model's highest-conviction head is unstable.
+- Long-short turnover is very high, roughly 1.5 to 2.0 per rebalance, so cost control is now a first-order issue.
+
 ## Assessment
-This is the frozen current GRU baseline. It replaces the earlier pure-regression E01 as the main GRU result, while the stable variant is retained only as an ablation. The date-aware MSE+IC objective aligns training with the daily cross-section RankIC evaluation target, avoids checkpoint-level prediction collapse, and keeps full validation/test daily coverage. The signal is positive on both validation and test, with stronger test RankIC than validation RankIC. Top-K proxy and non-overlapping 5-day backtest results confirm some ranking value, especially around K=30. However, weak validation returns, non-monotonic deciles, and benchmark underperformance on test mean the current model should be delivered as a model baseline, not as a final tradable strategy.
+This is the frozen current GRU baseline. It replaces the earlier pure-regression E01 as the main GRU result, while the stable variant is retained only as an ablation. The date-aware MSE+IC objective aligns training with the daily cross-section RankIC evaluation target, avoids checkpoint-level prediction collapse, and keeps full validation/test daily coverage. The signal is positive on both validation and test, with stronger test RankIC than validation RankIC. Top-K proxy and non-overlapping 5-day backtest results confirm some ranking value, especially around K=30. The long-short check shows that alpha exists before costs, but high turnover absorbs most of it after realistic costs. Weak validation returns, non-monotonic deciles, benchmark underperformance on test, and high long-short turnover mean the current model should be delivered as a model baseline, not as a final tradable strategy.
 
 ## Run Command
 ```bash
@@ -173,6 +194,6 @@ python scripts/train_sequence.py --config configs/sequence_gru_baseline_stable.y
 ```
 
 ## Next Actions
-1. Add a true daily equity-curve backtest with explicit t+1 execution price when raw executable prices are wired in.
-2. Run GRU lookback=60 and compare IC, Top-K spread, and backtest metrics with the frozen l20 baseline.
-3. Consider a small `ic_loss_alpha` sweep after the l60 comparison.
+1. Diagnose why test Top10 fails by inspecting size, liquidity, volatility, limit-status, and industry exposure of Top/Bottom names.
+2. Add liquidity and volatility filters, then rerun Top-K and long-short backtests.
+3. Run GRU lookback=60 and compare IC, Top-K spread, long-short net, and turnover with the frozen l20 baseline.
