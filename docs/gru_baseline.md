@@ -106,8 +106,31 @@
   - validation: approximately 0.02996 on 484 days
   - test: approximately 0.04880 on 329 days
 
+## Top-K Proxy Evaluation
+- Evaluation script: `scripts/evaluate_topk.py`
+- Input file: `outputs/runs/e02_gru_l20_mse_ic_02/predictions.parquet`
+- Output files:
+  - `outputs/runs/e02_gru_l20_mse_ic_02/topk_metrics.json`
+  - `outputs/runs/e02_gru_l20_mse_ic_02/topk_daily.csv`
+  - `outputs/runs/e02_gru_l20_mse_ic_02/topk_quantiles.csv`
+- Scope: prediction-only portfolio proxy using `label_rel_return`; this is not yet a transaction-cost-aware backtest.
+
+| Split | K | Top mean | Bottom mean | Top-Bottom spread | Spread IR | Spread positive rate |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| validation | 10 | -0.000116 | -0.002515 | 0.002399 | 0.0719 | 0.5599 |
+| validation | 20 | -0.000314 | -0.002098 | 0.001784 | 0.0752 | 0.5558 |
+| validation | 30 | 0.000195 | -0.002680 | 0.002875 | 0.1620 | 0.5909 |
+| test | 10 | -0.005884 | -0.004612 | -0.001272 | -0.0374 | 0.5106 |
+| test | 20 | -0.004043 | -0.005081 | 0.001039 | 0.0406 | 0.5714 |
+| test | 30 | -0.002721 | -0.004404 | 0.001684 | 0.0804 | 0.5441 |
+
+Top-K proxy interpretation:
+- Validation split shows positive long-short spread across K=10/20/30, with the cleanest result at K=30.
+- Test split keeps positive spread at K=20/30, but the magnitude and IR are weak; K=10 is negative.
+- Decile monotonicity is not clean, so the current signal is useful as a model-level ranking baseline but not yet strong enough to claim robust tradable portfolio value.
+
 ## Assessment
-This is the frozen current GRU baseline. It replaces the earlier pure-regression E01 as the main GRU result, while the stable variant is retained only as an ablation. The date-aware MSE+IC objective aligns training with the daily cross-section RankIC evaluation target, avoids checkpoint-level prediction collapse, and keeps full validation/test daily coverage. The signal is positive on both validation and test, with stronger test RankIC than validation RankIC. It is ready to serve as the model-level baseline, but portfolio-level validation is still required before claiming tradable strategy value.
+This is the frozen current GRU baseline. It replaces the earlier pure-regression E01 as the main GRU result, while the stable variant is retained only as an ablation. The date-aware MSE+IC objective aligns training with the daily cross-section RankIC evaluation target, avoids checkpoint-level prediction collapse, and keeps full validation/test daily coverage. The signal is positive on both validation and test, with stronger test RankIC than validation RankIC. Top-K proxy results confirm some ranking value, especially around K=20/30, but the weak test spread and non-monotonic deciles mean portfolio-level validation remains the next gate before claiming tradable strategy value.
 
 ## Run Command
 ```bash
@@ -122,6 +145,6 @@ python scripts/train_sequence.py --config configs/sequence_gru_baseline_stable.y
 ```
 
 ## Next Actions
-1. Add portfolio-style validation metrics, including top/bottom decile spread and long-short proxy.
-2. Run the first Top-K portfolio proxy evaluation on the frozen baseline predictions.
-3. Consider a small `ic_loss_alpha` sweep only after portfolio-level diagnostics are available.
+1. Run a transaction-cost-aware Top-K backtest with t+1 execution and 5-day holding alignment.
+2. Compare Top 10/20/30 against benchmark and equal-weight universe returns.
+3. Consider a small `ic_loss_alpha` sweep only after backtest diagnostics are available.
