@@ -178,8 +178,32 @@ Long-short interpretation:
 - K=10 fails on test even before costs, confirming that the model's highest-conviction head is unstable.
 - Long-short turnover is very high, roughly 1.5 to 2.0 per rebalance, so cost control is now a first-order issue.
 
+## Top10 Failure Diagnosis
+- Evaluation script: `scripts/diagnose_topk.py`
+- Input files:
+  - `outputs/runs/e02_gru_l20_mse_ic_02/predictions.parquet`
+  - `data/mart/datasets/dataset_v20260526.parquet`
+  - `data/lake/raw/basic/basic_b5ea92fdf45d.parquet`
+- Output files:
+  - `outputs/runs/e02_gru_l20_mse_ic_02/topk_diagnosis_test_groups.csv`
+  - `outputs/runs/e02_gru_l20_mse_ic_02/topk_diagnosis_test_industry.csv`
+  - `outputs/runs/e02_gru_l20_mse_ic_02/topk_diagnosis_test_worst.csv`
+  - `outputs/runs/e02_gru_l20_mse_ic_02/topk_diagnosis_test_spread.csv`
+
+Key test-split findings:
+- Top10 is not obviously lower-quality than Top30 by liquidity, size, or volatility. Top10 has slightly smaller mean future return than Top30, but similar size and slightly lower 20-day volatility.
+- The main anomaly is prediction-score saturation. In the test split, 16,435 / 28,415 rows, or approximately 57.8%, are exactly at the maximum prediction score `0.008304736`.
+- On 324 / 329 test dates, at least 10 names share the maximum score; on 267 / 329 test dates, at least 30 names share the maximum score.
+- This means Top10 is often selected from a large tied-score plateau instead of a truly ordered head. Top30 is more stable mainly because it diversifies across the plateau.
+- Worst Top10 contributors repeatedly include the same max-score names across adjacent dates, for example `300033.SZ` in April 2026 and several March 2025 names. This suggests score saturation plus repeated holding-window exposure, not only a simple liquidity or small-cap issue.
+
+Top10 failure interpretation:
+- The immediate root cause is not a clean low-liquidity or high-volatility contamination pattern.
+- The higher-priority issue is output saturation / poor head ranking resolution.
+- Liquidity and volatility filters are still useful, but they should be treated as secondary ablations after fixing or bypassing the tied-score head.
+
 ## Assessment
-This is the frozen current GRU baseline. It replaces the earlier pure-regression E01 as the main GRU result, while the stable variant is retained only as an ablation. The date-aware MSE+IC objective aligns training with the daily cross-section RankIC evaluation target, avoids checkpoint-level prediction collapse, and keeps full validation/test daily coverage. The signal is positive on both validation and test, with stronger test RankIC than validation RankIC. Top-K proxy and non-overlapping 5-day backtest results confirm some ranking value, especially around K=30. The long-short check shows that alpha exists before costs, but high turnover absorbs most of it after realistic costs. Weak validation returns, non-monotonic deciles, benchmark underperformance on test, and high long-short turnover mean the current model should be delivered as a model baseline, not as a final tradable strategy.
+This is the frozen current GRU baseline. It replaces the earlier pure-regression E01 as the main GRU result, while the stable variant is retained only as an ablation. The date-aware MSE+IC objective aligns training with the daily cross-section RankIC evaluation target, avoids checkpoint-level prediction collapse, and keeps full validation/test daily coverage. The signal is positive on both validation and test, with stronger test RankIC than validation RankIC. Top-K proxy and non-overlapping 5-day backtest results confirm some ranking value, especially around K=30. The long-short check shows that alpha exists before costs, but high turnover absorbs most of it after realistic costs. The Top10 failure diagnosis further shows severe prediction-score saturation at the head, so narrow Top-K portfolios are not reliable. Weak validation returns, non-monotonic deciles, benchmark underperformance on test, high long-short turnover, and saturated head scores mean the current model should be delivered as a model baseline, not as a final tradable strategy.
 
 ## Run Command
 ```bash
@@ -194,6 +218,7 @@ python scripts/train_sequence.py --config configs/sequence_gru_baseline_stable.y
 ```
 
 ## Next Actions
-1. Diagnose why test Top10 fails by inspecting size, liquidity, volatility, limit-status, and industry exposure of Top/Bottom names.
-2. Add liquidity and volatility filters, then rerun Top-K and long-short backtests.
-3. Run GRU lookback=60 and compare IC, Top-K spread, long-short net, and turnover with the frozen l20 baseline.
+1. Fix or bypass head score saturation: inspect model head/loss behavior, add prediction-distribution diagnostics, and test a less saturating loss/head setting.
+2. Add tie-aware portfolio selection or avoid narrow K until score resolution improves; use K=30 as the current safer portfolio width.
+3. Add liquidity and volatility filters as secondary ablations, then rerun Top-K and long-short backtests.
+4. Run GRU lookback=60 and compare IC, Top-K spread, long-short net, turnover, and max-score saturation with the frozen l20 baseline.
