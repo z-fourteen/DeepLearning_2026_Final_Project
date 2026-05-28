@@ -223,6 +223,12 @@ conda activate dl_env
 python scripts/train_sequence.py --config configs/sequence_gru_l20_mse_ic_leaky_head_001.yaml --device cuda
 ```
 
+LeakyReLU robustness grid:
+```bash
+conda activate dl_env
+python scripts/run_leaky_head_grid.py --device cuda --evaluate
+```
+
 Stable run:
 ```bash
 conda activate dl_env
@@ -230,9 +236,9 @@ python scripts/train_sequence.py --config configs/sequence_gru_baseline_stable.y
 ```
 
 ## Next Actions
-1. Run `configs/sequence_gru_l20_mse_ic_leaky_head_001.yaml` on cloud. This is the next priority after GELU removed score ties but weakened RankIC and Top-K performance.
-2. Compare LeakyReLU against the frozen ReLU-head baseline and GELU ablation on max-score tie ratio, RankIC, Top-K spread, long-short net, and turnover.
-3. Accept LeakyReLU only if validation RankIC stays near the baseline, max-score tie days are eliminated, and test K30 long-short remains positive after 10 bps cost.
+1. Run the LeakyReLU robustness grid with `scripts/run_leaky_head_grid.py`.
+2. Compare the three grid runs against `gru_l20_mse_ic_leaky_head_001`, the frozen ReLU-head baseline, and the GELU ablation on max-score tie ratio, RankIC, Top-K spread, long-short net, and turnover.
+3. Accept a LeakyReLU head only if validation RankIC stays near the baseline, max-score tie days are eliminated, and test K30 long-short remains positive after 10 bps cost.
 4. Add tie-aware portfolio selection or avoid narrow K until score resolution improves; use K=30 as the current safer portfolio width.
 5. Add liquidity and volatility filters as secondary ablations, then rerun Top-K and long-short backtests.
 6. Run GRU lookback=60 and compare IC, Top-K spread, long-short net, turnover, and max-score saturation with the frozen l20 baseline.
