@@ -211,6 +211,12 @@ conda activate dl_env
 python scripts/train_sequence.py --config configs/sequence_gru_baseline.yaml --device cuda
 ```
 
+GELU head ablation run:
+```bash
+conda activate dl_env
+python scripts/train_sequence.py --config configs/sequence_gru_l20_mse_ic_gelu_head.yaml --device cuda
+```
+
 Stable run:
 ```bash
 conda activate dl_env
@@ -218,7 +224,7 @@ python scripts/train_sequence.py --config configs/sequence_gru_baseline_stable.y
 ```
 
 ## Next Actions
-1. Fix or bypass head score saturation: inspect model head/loss behavior, add prediction-distribution diagnostics, and test a less saturating loss/head setting.
+1. Run `configs/sequence_gru_l20_mse_ic_gelu_head.yaml` on cloud and compare max-score tie ratio, RankIC, Top-K spread, and long-short net against the frozen ReLU-head baseline.
 2. Add tie-aware portfolio selection or avoid narrow K until score resolution improves; use K=30 as the current safer portfolio width.
 3. Add liquidity and volatility filters as secondary ablations, then rerun Top-K and long-short backtests.
 4. Run GRU lookback=60 and compare IC, Top-K spread, long-short net, turnover, and max-score saturation with the frozen l20 baseline.
