@@ -8,6 +8,9 @@ import pandas as pd
 
 RUN_DIRS = {
     "old_full62": Path("outputs/runs/gru_l20_mse_ic_leaky_head_slope_0005"),
+    "legacy62_strictmask": Path(
+        "outputs/runs/gru_l20_legacy_full_strictmask_leaky0005"
+    ),
     "new_alpha13": Path("outputs/runs/gru_l20_clean_alpha_only_strictmask_leaky0005"),
     "new_alpha18_resid": Path(
         "outputs/runs/gru_l20_clean_alpha_resid_style_strictmask_leaky0005"
@@ -123,7 +126,7 @@ def common_universe_metrics(preds: dict[str, pd.DataFrame]) -> pd.DataFrame:
         ["trade_date", "ts_code", "split", "pred_score", "label_rel_return"]
     ].rename(columns={"pred_score": "old_score"})
     rows: list[dict[str, Any]] = []
-    for run in ["new_alpha13", "new_alpha18_resid"]:
+    for run in ["legacy62_strictmask", "new_alpha13", "new_alpha18_resid"]:
         merged = preds[run][["trade_date", "ts_code", "split", "pred_score"]].merge(
             old,
             on=["trade_date", "ts_code", "split"],
@@ -164,8 +167,11 @@ def topk_overlap(
 ) -> pd.DataFrame:
     rows: list[dict[str, Any]] = []
     pairs = [
+        ("old_full62", "legacy62_strictmask"),
         ("old_full62", "new_alpha13"),
         ("old_full62", "new_alpha18_resid"),
+        ("legacy62_strictmask", "new_alpha13"),
+        ("legacy62_strictmask", "new_alpha18_resid"),
         ("new_alpha13", "new_alpha18_resid"),
     ]
     for left_name, right_name in pairs:

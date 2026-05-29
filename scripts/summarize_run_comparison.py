@@ -10,6 +10,7 @@ import pandas as pd
 
 RUNS = {
     "old_full62": Path("outputs/runs/gru_l20_mse_ic_leaky_head_slope_0005"),
+    "legacy62_strictmask": Path("outputs/runs/gru_l20_legacy_full_strictmask_leaky0005"),
     "new_alpha13": Path("outputs/runs/gru_l20_clean_alpha_only_strictmask_leaky0005"),
     "new_alpha18_resid": Path("outputs/runs/gru_l20_clean_alpha_resid_style_strictmask_leaky0005"),
 }
