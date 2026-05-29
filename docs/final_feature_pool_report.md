@@ -1,4 +1,4 @@
-# 模型构建交接文档：创业板全历史数据集与固定特征池
+﻿# 模型构建交接文档：创业板全历史数据集与固定特征池
 
 本文档面向下一位合作者：模型构建者。目标是让模型同学无需回溯 Agent 1-4 的全部工程细节，即可直接读取数据、理解字段、按固定时间切分训练 LightGBM / GRU / Transformer，并输出统一预测文件供 Top-K 回测使用。
 
@@ -382,13 +382,13 @@ conda run -n dl_env python scripts/run_factor_validation.py --data-version v2026
 训练期验证输出：
 
 ```text
-outputs/factor_validation/v20260526/all_lag1/label_rel_return_q5_cs30_corr0p85_train_20221231_eval_20230101_quantile_on_ext_off_neutral_off/
+outputs/factor_validation/all_lag1/label_rel_return_q5_cs30_corr0p85_train_20221231_eval_20230101_quantile_on_ext_off_neutral_off/
 ```
 
 全历史诊断输出：
 
 ```text
-outputs/factor_validation/v20260526/all_lag1/label_rel_return_q5_cs30_corr0p85_train_all_eval_all_quantile_on_ext_on_neutral_on/
+outputs/factor_validation/all_lag1/label_rel_return_q5_cs30_corr0p85_train_all_eval_all_quantile_on_ext_on_neutral_on/
 ```
 
 全历史诊断只用于理解因子，不用于最终测试集调参。
