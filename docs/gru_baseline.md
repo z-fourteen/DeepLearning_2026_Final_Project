@@ -1,16 +1,15 @@
-# GRU Baseline - Date-Aware MSE+IC
+# GRU Baseline Mainline - LeakyReLU Slope 0.005
 
 ## Status
-- Baseline version: frozen current baseline
+- Baseline version: frozen current mainline baseline
 - Model: GRU Baseline
-- Config: `configs/sequence_gru_baseline.yaml`
-- Reference run: `outputs/runs/e02_gru_l20_mse_ic_02/`
-- Recorded date: 2026-05-27
+- Mainline run: `outputs/runs/gru_l20_mse_ic_leaky_head_slope_0005/`
+- Mainline config: `configs/sequence_gru_l20_mse_ic_frozen_head.yaml`
+- Recorded date: 2026-05-29
 - Upload policy: local run artifacts are excluded from Git by `.gitignore`.
-- Baseline decision: `e02_gru_l20_mse_ic_02` is the main GRU baseline for the current stage.
-- Frozen active head: LeakyReLU slope-0.005 from `gru_l20_mse_ic_leaky_head_slope_0005`.
-- Frozen head config: `configs/sequence_gru_l20_mse_ic_frozen_head.yaml`.
-- Frozen head parameters: `head_activation: leaky_relu`, `head_negative_slope: 0.005`, `head_dropout: 0.3`.
+- Baseline decision: `gru_l20_mse_ic_leaky_head_slope_0005` is the GRU baseline mainline.
+- Historical versions kept only for traceback: `e02_gru_l20_mse_ic_02`, `gru_l20_mse_ic_gelu_head`, `gru_l20_mse_ic_leaky_head_001`, and stable variants.
+- Historical versions should not be used for new experiments unless explicitly doing retrospective comparison.
 
 ## Data Interface
 - Dataset: sequence NPZ
@@ -29,8 +28,8 @@
 - Backbone: single-direction GRU
 - Input projection: `FeatureProjection`
 - Sequence pooling: last hidden state
-- Output head: linear regression score
-- Output activation: none
+- Mainline head: LeakyReLU hidden head with `negative_slope=0.005`, followed by a linear regression score
+- Final output activation: none
 
 ## Training Objective
 - Loss: `mse_ic`
@@ -56,10 +55,29 @@
 - Minimum best-checkpoint daily coverage: 0.8
 - Collapse stop patience: 2
 
-## Stable Variant
+## Historical Variants
+
+Historical variants are retained only for traceback and report comparison. They are not active baselines for future experiments.
+
+ReLU reference:
+- Config: `configs/sequence_gru_baseline.yaml`
+- Run: `outputs/runs/e02_gru_l20_mse_ic_02/`
+- Status: historical version only; not used as the mainline after head saturation diagnosis.
+
+GELU head:
+- Config: `configs/sequence_gru_l20_mse_ic_gelu_head.yaml`
+- Run: `outputs/runs/gru_l20_mse_ic_gelu_head/`
+- Status: historical ablation only; saturation was removed but alpha weakened.
+
+Parent LeakyReLU head:
+- Config: `configs/sequence_gru_l20_mse_ic_leaky_head_001.yaml`
+- Run: `outputs/runs/gru_l20_mse_ic_leaky_head_001/`
+- Status: historical ablation only; kept as a fallback comparison to slope 0.005.
+
+Stable variants:
 - Config: `configs/sequence_gru_baseline_stable.yaml`
 - Purpose: conservative ablation/stability check on top of the current date-aware MSE+IC baseline.
-- Status: not the main baseline; it is kept only as a stability comparison run.
+- Status: historical stability comparison only.
 - It keeps the same data interface, GRU architecture, date-aware batch mode, and `mse_ic` objective.
 - Conservative changes:
   - Learning rate: 0.0003 -> 0.0002
@@ -73,7 +91,7 @@
   - Minimum best-checkpoint daily coverage: 0.8 -> 0.9
 - Output directory: `outputs/runs/gru_l20_date_aware_mse_ic_baseline_stable/`
 
-## Reference Result
+## Historical ReLU Reference Result
 - Best epoch: 13
 - Best validation RankIC mean: 0.0299640
 - Best validation IC mean: 0.0208654
@@ -206,9 +224,16 @@ Top10 failure interpretation:
 - Liquidity and volatility filters are still useful, but they should be treated as secondary ablations after fixing or bypassing the tied-score head.
 
 ## Assessment
-This is the frozen current GRU baseline. It replaces the earlier pure-regression E01 as the main GRU result, while the stable variant is retained only as an ablation. The date-aware MSE+IC objective aligns training with the daily cross-section RankIC evaluation target, avoids checkpoint-level prediction collapse, and keeps full validation/test daily coverage. The signal is positive on both validation and test, with stronger test RankIC than validation RankIC. Top-K proxy and non-overlapping 5-day backtest results confirm some ranking value, especially around K=30. The long-short check shows that alpha exists before costs, but high turnover absorbs most of it after realistic costs. The Top10 failure diagnosis further shows severe prediction-score saturation at the head, so narrow Top-K portfolios are not reliable. Weak validation returns, non-monotonic deciles, benchmark underperformance on test, high long-short turnover, and saturated head scores mean the current model should be delivered as a model baseline, not as a final tradable strategy.
+`gru_l20_mse_ic_leaky_head_slope_0005` is the frozen GRU baseline mainline. The earlier ReLU, GELU, parent LeakyReLU, and stable runs are historical versions kept only for traceback. The mainline keeps the date-aware MSE+IC GRU backbone while replacing the saturated ReLU head with a LeakyReLU slope-0.005 head. This fixes the head-resolution failure and makes Top-K diagnostics more meaningful, but it does not yet establish a final tradable strategy. High turnover, weak validation long-short performance after cost, incomplete feature/style neutralization, and tradability constraints remain first-order blockers.
 
 ## Run Command
+Mainline run:
+```bash
+conda activate dl_env
+python scripts/train_sequence.py --config configs/sequence_gru_l20_mse_ic_frozen_head.yaml --device cuda
+```
+
+Historical ReLU reference run:
 ```bash
 conda activate dl_env
 python scripts/train_sequence.py --config configs/sequence_gru_baseline.yaml --device cuda
@@ -233,13 +258,6 @@ python scripts/run_leaky_head_grid.py --device cuda --evaluate
 ```
 The grid has been reduced to the selected slope-0.005 variant after freezing the active head.
 
-Frozen LeakyReLU head run:
-```bash
-conda activate dl_env
-python scripts/train_sequence.py --config configs/sequence_gru_l20_mse_ic_frozen_head.yaml --device cuda
-```
-
-
 Stable run:
 ```bash
 conda activate dl_env
@@ -247,8 +265,8 @@ python scripts/train_sequence.py --config configs/sequence_gru_baseline_stable.y
 ```
 
 ## Next Actions
-1. Treat `configs/sequence_gru_l20_mse_ic_frozen_head.yaml` as the canonical active head for the next modeling stage.
-2. Do not continue head-level grid search unless later feature or trading-constraint changes reintroduce score saturation.
+1. Treat `configs/sequence_gru_l20_mse_ic_frozen_head.yaml` as the canonical mainline GRU architecture for the next modeling stage.
+2. Do not use historical versions for new experiments unless explicitly doing retrospective comparison.
 3. Use `gru_l20_mse_ic_leaky_head_slope_0005` as the reference artifact for current frozen-head evidence.
 4. Move the next iteration to feature neutralization, toxic-sample filtering, tradability constraints, and turnover control.
 5. Keep K=30 as the safer portfolio-width diagnostic until narrow-head behavior is validated under lower turnover.
