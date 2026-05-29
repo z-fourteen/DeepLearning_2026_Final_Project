@@ -35,6 +35,16 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Build train objects for each config without training.",
     )
+    parser.add_argument(
+        "--force-rerun",
+        action="store_true",
+        help="Rerun training even when metrics.json and predictions.parquet already exist.",
+    )
+    parser.add_argument(
+        "--force-evaluate",
+        action="store_true",
+        help="Rerun evaluation even when topk_metrics.json and backtest_metrics.json already exist.",
+    )
     parser.add_argument("--max-epochs", type=int, help="Optional training epoch override.")
     parser.add_argument("--max-train-batches", type=int, help="Optional smoke-test train batch cap.")
     parser.add_argument("--max-val-batches", type=int, help="Optional smoke-test validation batch cap.")
@@ -67,6 +77,14 @@ def load_output_dir(config_path: Path) -> Path:
     if not output_dir.is_absolute():
         output_dir = PROJECT_ROOT / output_dir
     return output_dir
+
+
+def training_complete(output_dir: Path) -> bool:
+    return (output_dir / "metrics.json").exists() and (output_dir / "predictions.parquet").exists()
+
+
+def evaluation_complete(output_dir: Path) -> bool:
+    return (output_dir / "topk_metrics.json").exists() and (output_dir / "backtest_metrics.json").exists()
 
 
 def train_command(args: argparse.Namespace, config: str) -> list[str]:
@@ -127,9 +145,27 @@ def evaluate_run(args: argparse.Namespace, config: str) -> None:
 def main() -> None:
     args = parse_args()
     for config in GRID_CONFIGS:
-        run_command(train_command(args, config))
+        output_dir = load_output_dir(PROJECT_ROOT / config)
+        if args.dry_run:
+            run_command(train_command(args, config))
+            continue
+
+        if training_complete(output_dir) and not args.force_rerun:
+            print(
+                f"\n[skip] training already complete for {config}: {output_dir.relative_to(PROJECT_ROOT)}",
+                flush=True,
+            )
+        else:
+            run_command(train_command(args, config))
+
         if args.evaluate and not args.dry_run:
-            evaluate_run(args, config)
+            if evaluation_complete(output_dir) and not args.force_evaluate:
+                print(
+                    f"[skip] evaluation already complete for {config}: {output_dir.relative_to(PROJECT_ROOT)}",
+                    flush=True,
+                )
+            else:
+                evaluate_run(args, config)
 
     print("\nAll LeakyReLU robustness grid runs completed.", flush=True)
 

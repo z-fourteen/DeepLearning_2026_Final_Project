@@ -228,6 +228,8 @@ LeakyReLU robustness grid:
 conda activate dl_env
 python scripts/run_leaky_head_grid.py --device cuda --evaluate
 ```
+The grid runner skips completed runs by default. Use `--force-rerun` or `--force-evaluate` only when intentionally regenerating artifacts.
+
 
 Stable run:
 ```bash
