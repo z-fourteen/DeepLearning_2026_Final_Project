@@ -411,11 +411,69 @@ Required disclaimer:
 
 ## Immediate Checklist
 
-- [ ] Freeze the current test result.
-- [ ] Add point-in-time audit script.
+- [x] Freeze the current test result.
+- [x] Add point-in-time audit script.
 - [ ] Build purged and embargoed walk-forward folds.
 - [ ] Generate style exposure reports.
 - [ ] Build initial portfolio optimizer.
 - [ ] Replace proxy backtest with execution-aware simulation.
 - [ ] Downgrade long-short results to diagnostic status.
 - [ ] Re-evaluate only after the above controls are in place.
+
+## Point-In-Time Audit Run 2026-05-29
+
+Command:
+
+```bash
+conda activate dl_env
+python scripts/audit_point_in_time.py
+```
+
+Generated outputs:
+
+```text
+outputs/audit/point_in_time/field_audit.csv
+outputs/audit/point_in_time/feature_column_audit.csv
+outputs/audit/point_in_time/negative_shift_audit.csv
+outputs/audit/point_in_time/suspect_features.txt
+outputs/audit/point_in_time/leakage_findings.md
+```
+
+Verdict:
+
+```text
+PASS_WITH_WARNINGS
+```
+
+Summary:
+
+| Severity | Count |
+| --- | ---: |
+| Blocker | 0 |
+| Warning | 4 |
+| Pass | 9 |
+
+Confirmed pass checks:
+
+- Feature config declares `future_shift_allowed=false`.
+- Feature config declares `dataset_requires_lagged_features_only=true`.
+- Mart dataset feature columns all use the `lag1_` prefix.
+- Static code scan found no unapproved negative feature shifts in audited mart/backtest scripts.
+- `add_lagged_features` uses grouped `shift(1)` for `lag1_` feature creation.
+- Mart dataset has unique `trade_date + ts_code` keys.
+- Label table has unique `trade_date + ts_code` keys.
+- `label_rel_return = future_return - benchmark_future_return` identity check passes.
+- Strict mask filter log has unique `trade_date + ts_code + split` keys.
+
+Open warnings:
+
+| ID | Issue | Required follow-up |
+| --- | --- | --- |
+| `CODE002` | Labels are future close-to-close returns, not executable T+1 open/VWAP returns. | Add execution-price labels before production-like backtest. |
+| `LBL003` | Label table lacks `next_open_return`, `next_vwap_return`, `buy_executable`, `sell_executable`, and fillability columns. | Build execution label table. |
+| `MSK002` | `mask_locked_limit` is based on same-date state, not next-session fill simulation. | Treat strict mask as conservative sample filter only; add next-open executable flags. |
+| `DATA003` | Dataset contains 42 style or microstructure-sensitive features. | Run style, liquidity, and execution attribution before production use. |
+
+Interpretation:
+
+The first point-in-time audit did not find direct future-feature leakage in the audited construction path. However, it does not clear the strategy for production because current labels and backtests remain close-to-close proxy evaluations. The next required step is not more model tuning; it is to build execution-aware labels and then rerun backtests under next-open or next-VWAP assumptions with fillability constraints.
