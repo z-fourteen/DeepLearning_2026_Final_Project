@@ -23,6 +23,8 @@ class GRUStockModel(BaseStockModel):
         pooling = str(self.config_value("pooling", "last_hidden"))
         head_hidden_dim = int(self.config_value("head_hidden_dim", 64))
         head_dropout = float(self.config_value("head_dropout", 0.3))
+        head_activation = str(self.config_value("head_activation", "relu"))
+        head_negative_slope = float(self.config_value("head_negative_slope", 0.01))
 
         if "bidirectional" in self.config and self.config["bidirectional"] not in (False, None):
             raise ValueError("GRU baseline is defined as unidirectional; do not enable bidirectional.")
@@ -53,7 +55,8 @@ class GRUStockModel(BaseStockModel):
             input_dim=rnn_hidden_dim,
             hidden_dim=head_hidden_dim,
             dropout=head_dropout,
-            activation="relu",
+            activation=head_activation,
+            negative_slope=head_negative_slope,
         )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
