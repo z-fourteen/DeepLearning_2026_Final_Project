@@ -937,3 +937,134 @@ Capacity interpretation:
 PM decision after this run:
 
 > Canonical label schema and PIT audit quality improved materially, but the strategy remains a research prototype. Capacity sensitivity does not rescue validation. Further model tuning is not the next bottleneck; residual style alpha and walk-forward robustness are.
+
+## Barra-lite Residual Alpha And Optimizer Run 2026-05-29
+
+### Residual Alpha Audit
+
+Command:
+
+```bash
+conda activate dl_env
+python scripts/audit_barra_lite_residual_alpha.py
+```
+
+Generated outputs:
+
+```text
+outputs/audit/barra_lite_residual_alpha/daily_residual_ic.csv
+outputs/audit/barra_lite_residual_alpha/decile_returns.csv
+outputs/audit/barra_lite_residual_alpha/residual_summary.csv
+outputs/audit/barra_lite_residual_alpha/residual_alpha_findings.md
+outputs/audit/barra_lite_residual_alpha/manifest.json
+```
+
+Target:
+
+```text
+execution_excess_open_to_close5
+```
+
+Residual IC summary:
+
+| Split | Control set | Mean raw IC | Mean residual IC | Score coef after controls | Positive residual IC rate |
+| --- | --- | ---: | ---: | ---: | ---: |
+| test | none | 0.045503 | 0.045503 | 0.002323 | 0.6292 |
+| test | size | 0.045503 | 0.047406 | 0.002340 | 0.6353 |
+| test | size_liquidity | 0.045503 | 0.068503 | 0.004088 | 0.6748 |
+| test | full_style | 0.045503 | 0.042046 | 0.002969 | 0.6140 |
+| test | industry_proxy_full_style | 0.045503 | 0.057947 | 0.003734 | 0.6535 |
+| validation | none | 0.011288 | 0.011288 | 0.000289 | 0.5289 |
+| validation | size | 0.011288 | 0.012128 | 0.000281 | 0.5310 |
+| validation | size_liquidity | 0.011288 | 0.009563 | 0.000454 | 0.5269 |
+| validation | full_style | 0.011288 | 0.004680 | 0.000476 | 0.5000 |
+| validation | industry_proxy_full_style | 0.011288 | 0.001508 | 0.000227 | 0.4917 |
+
+Interpretation:
+
+- Test residual IC remains strong after style controls, and even improves under size/liquidity or industry-proxy controls.
+- Validation raw IC is already weak; after full-style or industry-proxy full-style controls, residual IC nearly disappears.
+- This is strong evidence that the test-period score is not the same object as the validation-period score. The model is partly capturing a regime-specific style/liquidity structure rather than stable residual alpha.
+- The correct next research question is no longer "can full62 predict in test?", but "can residual alpha survive across folds after style controls?"
+
+### Barra-lite Optimizer Experiment
+
+Command:
+
+```bash
+conda activate dl_env
+python scripts/optimize_portfolio.py \
+  --output-dir outputs/backtest/optimizer/barra_lite_full62 \
+  --risk-control "none,industry_proxy,industry_size,industry_size_liquidity_vol_mom" \
+  --k "10,30" \
+  --style-penalty "0,0.05,0.10,0.20" \
+  --turnover-penalty "0,0.02" \
+  --portfolio-nav 10000000 \
+  --participation-cap 0.03 \
+  --cost-bps 10 \
+  --slippage-bps 5 \
+  --rebalance-stride 5
+```
+
+Generated outputs:
+
+```text
+outputs/backtest/optimizer/barra_lite_full62/optimizer_periods.csv
+outputs/backtest/optimizer/barra_lite_full62/optimizer_summary.csv
+outputs/backtest/optimizer/barra_lite_full62/manifest.json
+```
+
+Method:
+
+This first optimizer is a transparent Barra-lite constrained re-ranker, not a full QP optimizer. It uses:
+
+- model score as alpha;
+- industry-proxy and style exposures as soft penalties;
+- turnover penalty for names not already held;
+- T+1 canonical executable labels;
+- 10m NAV and 3% participation cap;
+- 10 bps cost plus 5 bps slippage.
+
+Best test rows:
+
+| Split | Risk control | K | Style penalty | Turnover penalty | Net ann. | Excess vs benchmark ann. | Excess vs exec universe ann. | Max DD | Full-style exposure |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| test | industry_proxy | 10 | 0.20 | 0.02 | 0.7134 | 0.0891 | 0.1991 | -0.1981 | 0.4112 |
+| test | industry_proxy | 10 | 0.10 | 0.02 | 0.7106 | 0.0864 | 0.1966 | -0.1976 | 0.4068 |
+| test | industry_proxy | 10 | 0.10 | 0.00 | 0.7104 | 0.0863 | 0.1965 | -0.1976 | 0.4067 |
+
+Best validation rows:
+
+| Split | Risk control | K | Style penalty | Turnover penalty | Net ann. | Excess vs benchmark ann. | Excess vs exec universe ann. | Max DD | Full-style exposure |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| validation | industry_proxy | 30 | 0.20 | 0.02 | -0.1946 | -0.1822 | -0.1133 | -0.5504 | 0.2851 |
+| validation | industry_proxy | 30 | 0.10 | 0.02 | -0.1950 | -0.1827 | -0.1138 | -0.5497 | 0.2898 |
+| validation | industry_proxy | 30 | 0.20 | 0.00 | -0.1957 | -0.1834 | -0.1147 | -0.5495 | 0.2862 |
+
+Control-effect diagnostic:
+
+| Split | Portfolio | Excess vs exec universe ann. | Full-style exposure |
+| --- | --- | ---: | ---: |
+| validation | K30 none, turnover penalty 0.02 | -0.1216 | 0.2887 |
+| validation | K30 industry_proxy, style 0.20, turnover 0.02 | -0.1133 | 0.2851 |
+| validation | K30 industry_size_liquidity_vol_mom, style 0.20, turnover 0.02 | -0.1198 | 0.2858 |
+
+Optimizer conclusion:
+
+- Soft style penalties do not materially reduce full-style exposure.
+- Validation improves only slightly versus the unconstrained K30 row, and remains deeply negative.
+- Test remains strong under K10 industry-proxy control, but this is not enough because validation failure persists.
+- The current re-ranker is useful as a diagnostic baseline, but it is not a sufficient portfolio optimizer.
+
+PM verdict after residual and optimizer experiments:
+
+> The full62 score contains test-period residual signal, but that residual signal is not stable in validation after broad style controls. Soft portfolio penalties are too weak to solve the problem. The next optimizer must use hard exposure caps or a real QP formulation; otherwise, continued tuning is mostly curve fitting around a regime break.
+
+Next required experiment:
+
+| Priority | Experiment | Requirement |
+| ---: | --- | --- |
+| 1 | Hard-constrained exposure optimizer | Explicit caps on size, liquidity, turnover, volatility, momentum, beta, and industry-proxy exposures versus universe. |
+| 2 | Residualized alpha portfolio | Use residualized score from daily cross-sectional regression, not raw score, then apply the same hard caps. |
+| 3 | Walk-forward folds | Repeat residual IC and optimizer evaluation across purged folds, not just the current validation/test split. |
+| 4 | Post-fill holdings attribution | Attribute realized weights after partial fills, not just target or selected names. |

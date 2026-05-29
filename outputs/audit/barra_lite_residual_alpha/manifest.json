@@ -1,0 +1,9 @@
+{
+  "predictions": "outputs/runs/gru_l20_mse_ic_leaky_head_slope_0005/predictions.parquet",
+  "mart": "data/mart/datasets/dataset_v20260526.parquet",
+  "labels": "data/mart/labels/labels_canonical_v20260526.parquet",
+  "target": "execution_excess_open_to_close5",
+  "rows_after_merge": 72218,
+  "summary_rows": 10,
+  "out_dir": "outputs\\audit\\barra_lite_residual_alpha"
+}
