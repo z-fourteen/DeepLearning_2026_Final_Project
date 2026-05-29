@@ -648,3 +648,110 @@ Recommended next diagnostic candidates:
 Next required step:
 
 Run capacity and participation sensitivity only on the three diagnostic candidates above. If they fail under smaller participation caps or larger NAV, stop strategy-promotion work and move to style attribution plus walk-forward validation.
+
+## Full62 Attribution Audit Run 2026-05-29
+
+Command:
+
+```bash
+conda activate dl_env
+python scripts/audit_full62_attribution.py
+```
+
+Generated outputs:
+
+```text
+outputs/audit/full62_attribution/candidate_selected_snapshots.parquet
+outputs/audit/full62_attribution/style_exposure_selected.csv
+outputs/audit/full62_attribution/style_liquidity_vs_universe.csv
+outputs/audit/full62_attribution/liquidity_bucket_returns.csv
+outputs/audit/full62_attribution/execution_attribution.csv
+outputs/audit/full62_attribution/full62_attribution_findings.md
+outputs/audit/full62_attribution/manifest.json
+```
+
+Scope:
+
+- Base signal: old full62 GRU score, LeakyReLU head slope=0.005.
+- Candidates: K10 keep=1.5x, K30 keep=3x, K30 keep=1x.
+- Return lens: T+1 fill simulation periods from the execution-aware K/keep matrix.
+- Attribution lens: selected target names versus executable universe. This is selection attribution, not yet post-fill weight attribution.
+
+### Execution Attribution
+
+| Candidate | Split | Net mean | Excess vs benchmark mean | Excess vs executable universe mean | Desired turnover | Filled turnover | Fill ratio | Avg sell rejects | Avg partial fills |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| K10 keep=1.5x | test | 0.011724 | 0.002019 | 0.003974 | 1.662486 | 0.142826 | 0.085911 | 1.500000 | 23.242424 |
+| K30 keep=3x | test | 0.010570 | 0.000865 | 0.002820 | 0.305066 | 0.041279 | 0.135311 | 4.409091 | 11.954545 |
+| K30 keep=1x | test | 0.009298 | -0.000407 | 0.001549 | 1.343890 | 0.220053 | 0.163744 | 7.833333 | 53.318182 |
+| K10 keep=1.5x | validation | -0.004418 | -0.005325 | -0.003747 | 1.679360 | 0.046814 | 0.027876 | 1.525773 | 23.195876 |
+| K30 keep=3x | validation | -0.002387 | -0.003294 | -0.001717 | 0.250957 | 0.023238 | 0.092596 | 2.618557 | 12.783505 |
+| K30 keep=1x | validation | -0.003164 | -0.004071 | -0.002493 | 1.415092 | 0.104329 | 0.073726 | 9.082474 | 59.371134 |
+
+Execution conclusion:
+
+The first-order cost drag is not the main killer. The larger issue is implementation distortion: filled turnover is only about 2.8% to 16.4% of desired turnover depending on split and candidate. This means the realized portfolio is materially different from the intended score-ranked portfolio. K30 keep=3x is the cleanest candidate from a churn perspective, but even it has validation net mean below zero and non-trivial blocked/partial execution.
+
+### Style Attribution
+
+Main selected-minus-universe patterns:
+
+| Candidate | Split | Dominant exposure pattern |
+| --- | --- | --- |
+| K10 keep=1.5x | test | Larger and more liquid names; lower turnover; lower recent activity/volatility. |
+| K30 keep=3x | test | Stable large-cap/liquid tilt; lower turnover; low-churn defensive profile. |
+| K30 keep=1x | test | More liquid than universe but still lower turnover and lower volume-log exposure. |
+| K30 keep=3x | validation | Strong large-cap tilt, strong low-turnover tilt, but negative returns. |
+
+Representative exposures:
+
+- K10 keep=1.5x test selects higher `lag1_amount_60d_mean` by about 589k and higher `lag1_log_circ_mv` by 0.222 versus universe.
+- K30 keep=3x test selects higher `lag1_amount_20d_mean` by about 517k and higher `lag1_log_circ_mv` by 0.215 versus universe.
+- K30 keep=3x validation selects higher `lag1_log_circ_mv` by 0.337 and lower `lag1_turnover_60d_mean` by 0.373 versus universe.
+- All three candidates consistently show lower turnover-rate exposure than the executable universe.
+
+Style conclusion:
+
+The current full62 result does not look like a pure micro-cap or junk-stock artifact. It is closer to a large/liquid/low-turnover/low-volatility selection profile with some reversal or defensive character. That is better than a microcap illusion, but it is still not robust alpha: the same broad style profile works in test and fails in validation.
+
+### Liquidity Attribution
+
+Executable-universe bucket returns show strong regime dependence:
+
+| Split | Bucket feature | Low bucket mean | Mid bucket mean | High bucket mean | Interpretation |
+| --- | --- | ---: | ---: | ---: | --- |
+| test | `lag1_amount_20d_mean` | 0.002826 | 0.009575 | 0.012447 | Test rewarded liquid names. |
+| test | `lag1_turnover_rate_f` | 0.003134 | 0.009072 | 0.012643 | Test rewarded high turnover. |
+| test | `lag1_ret_20d_std` | 0.003883 | 0.007617 | 0.013331 | Test rewarded high volatility. |
+| validation | `lag1_amount_20d_mean` | -0.001156 | -0.001651 | -0.000407 | Liquidity helped only weakly. |
+| validation | `lag1_turnover_rate_f` | -0.002243 | -0.001764 | 0.000790 | High turnover helped validation universe, while selected portfolios stayed low-turnover. |
+| validation | `lag1_log_circ_mv` | -0.000720 | -0.000610 | -0.001873 | Large-cap bucket hurt validation. |
+
+Liquidity conclusion:
+
+The profit is not concentrated in illiquid microcaps. In the test period, the whole executable universe rewarded high liquidity, high turnover, and high realized volatility buckets. The strategy's selected basket is not simply chasing those buckets; however, its positive test excess is still embedded in a favorable liquidity/volatility regime that did not hold in validation.
+
+### PM Verdict
+
+This attribution audit strengthens the "not production-ready" verdict.
+
+What is ruled out:
+
+- The result is probably not just a microcap garbage-stock backtest artifact.
+- The result is not primarily explained by explicit 10 bps cost plus 5 bps slippage drag.
+
+What remains dangerous:
+
+- The full62 alpha is style-regime dependent: large/liquid/low-turnover exposure is not consistently rewarded.
+- Execution constraints materially reshape the portfolio because most desired turnover is not filled under the 3% participation cap.
+- Validation remains negative for every diagnostic candidate even after moving strict tradability constraints into T+1 execution.
+- The test-positive candidates are therefore diagnostics, not deployable strategies.
+
+Required next experiments:
+
+| Priority | Experiment | Stop condition |
+| ---: | --- | --- |
+| 1 | Capacity and participation sensitivity on K10 keep=1.5x, K30 keep=3x, K30 keep=1x. NAV: 1m, 10m, 50m, 100m. Participation: 1%, 3%, 5%, 10%. | Stop promotion if excess survives only at unrealistic capacity or participation. |
+| 2 | Barra-lite residual alpha regression on selected returns and score deciles. Controls: Size, Momentum, Beta, Volatility, Liquidity, Industry. | Stop promotion if residual alpha is statistically weak or flips sign by split. |
+| 3 | Post-fill holdings attribution instead of target-selection attribution. | Stop promotion if realized holdings are dominated by fill artifacts rather than model rank. |
+| 4 | Walk-forward purged validation with fixed model-selection protocol. | Stop promotion if winners rotate by fold or require test-period selection. |
