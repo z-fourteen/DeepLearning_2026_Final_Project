@@ -1,6 +1,6 @@
 run:
-  name: "gru_l20_mse_ic_leaky_head_slope_001_dropout_02"
-  output_dir: "outputs/runs/gru_l20_mse_ic_leaky_head_slope_001_dropout_02"
+  name: "gru_l20_mse_ic_frozen_head"
+  output_dir: "outputs/runs/gru_l20_mse_ic_frozen_head"
   seed: 42
 
 data:
@@ -22,9 +22,9 @@ model:
   rnn_dropout: 0.2
   pooling: "last_hidden"
   head_hidden_dim: 64
-  head_dropout: 0.2
+  head_dropout: 0.3
   head_activation: "leaky_relu"
-  head_negative_slope: 0.01
+  head_negative_slope: 0.005
 
 training:
   device: "auto"

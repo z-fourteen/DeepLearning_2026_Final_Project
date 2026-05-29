@@ -10,8 +10,6 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 GRID_CONFIGS = [
     "configs/sequence_gru_l20_mse_ic_leaky_head_slope_0005.yaml",
-    "configs/sequence_gru_l20_mse_ic_leaky_head_slope_002.yaml",
-    "configs/sequence_gru_l20_mse_ic_leaky_head_slope_001_dropout_02.yaml",
 ]
 
 

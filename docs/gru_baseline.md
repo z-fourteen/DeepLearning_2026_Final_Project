@@ -8,6 +8,9 @@
 - Recorded date: 2026-05-27
 - Upload policy: local run artifacts are excluded from Git by `.gitignore`.
 - Baseline decision: `e02_gru_l20_mse_ic_02` is the main GRU baseline for the current stage.
+- Frozen active head: LeakyReLU slope-0.005 from `gru_l20_mse_ic_leaky_head_slope_0005`.
+- Frozen head config: `configs/sequence_gru_l20_mse_ic_frozen_head.yaml`.
+- Frozen head parameters: `head_activation: leaky_relu`, `head_negative_slope: 0.005`, `head_dropout: 0.3`.
 
 ## Data Interface
 - Dataset: sequence NPZ
@@ -228,7 +231,13 @@ LeakyReLU robustness grid:
 conda activate dl_env
 python scripts/run_leaky_head_grid.py --device cuda --evaluate
 ```
-The grid runner skips completed runs by default. Use `--force-rerun` or `--force-evaluate` only when intentionally regenerating artifacts.
+The grid has been reduced to the selected slope-0.005 variant after freezing the active head.
+
+Frozen LeakyReLU head run:
+```bash
+conda activate dl_env
+python scripts/train_sequence.py --config configs/sequence_gru_l20_mse_ic_frozen_head.yaml --device cuda
+```
 
 
 Stable run:
@@ -238,9 +247,9 @@ python scripts/train_sequence.py --config configs/sequence_gru_baseline_stable.y
 ```
 
 ## Next Actions
-1. Run the LeakyReLU robustness grid with `scripts/run_leaky_head_grid.py`.
-2. Compare the three grid runs against `gru_l20_mse_ic_leaky_head_001`, the frozen ReLU-head baseline, and the GELU ablation on max-score tie ratio, RankIC, Top-K spread, long-short net, and turnover.
-3. Accept a LeakyReLU head only if validation RankIC stays near the baseline, max-score tie days are eliminated, and test K30 long-short remains positive after 10 bps cost.
-4. Add tie-aware portfolio selection or avoid narrow K until score resolution improves; use K=30 as the current safer portfolio width.
-5. Add liquidity and volatility filters as secondary ablations, then rerun Top-K and long-short backtests.
-6. Run GRU lookback=60 and compare IC, Top-K spread, long-short net, turnover, and max-score saturation with the frozen l20 baseline.
+1. Treat `configs/sequence_gru_l20_mse_ic_frozen_head.yaml` as the canonical active head for the next modeling stage.
+2. Do not continue head-level grid search unless later feature or trading-constraint changes reintroduce score saturation.
+3. Use `gru_l20_mse_ic_leaky_head_slope_0005` as the reference artifact for current frozen-head evidence.
+4. Move the next iteration to feature neutralization, toxic-sample filtering, tradability constraints, and turnover control.
+5. Keep K=30 as the safer portfolio-width diagnostic until narrow-head behavior is validated under lower turnover.
+6. Run GRU lookback=60 only after the feature/tradability audit produces a cleaner input universe.
