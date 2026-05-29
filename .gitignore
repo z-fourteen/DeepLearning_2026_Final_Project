@@ -56,3 +56,7 @@ meta/data_versions.parquet
 meta/pool_registry.parquet
 logs/audit/*.json
 outputs/factor_validation/
+outputs/runs/
+
+# AI-generated session notes
+AI_docs/
