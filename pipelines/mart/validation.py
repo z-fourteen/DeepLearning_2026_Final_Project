@@ -68,6 +68,7 @@ def output_paths(output_dir: Path) -> dict[str, Path]:
         "yearly_quantile": output_dir / "factor_yearly_quantile_long_short.csv",
         "regime_quantile": output_dir / "factor_regime_quantile_long_short.csv",
         "neutralized_ic": output_dir / "factor_neutralized_ic.csv",
+        "neutralization_decay": output_dir / "factor_neutralization_decay.csv",
         "holdout_quantile": output_dir / "factor_holdout_quantile_long_short.csv",
         "quality": output_dir / "feature_quality.csv",
         "correlation": output_dir / "feature_correlation_top.csv",
@@ -588,6 +589,88 @@ def compute_ic_table(df: pd.DataFrame, features: list[str], label_column: str, m
     return summarize_ic_table(compute_daily_ic_table(df, features, label_column, min_cross_section), features)
 
 
+def build_neutralization_decay_table(ic_table: pd.DataFrame, neutralized_ic_table: pd.DataFrame) -> pd.DataFrame:
+    columns = [
+        "feature",
+        "neutralized_feature",
+        "raw_ic_mean",
+        "neutral_ic_mean",
+        "ic_abs_decay",
+        "ic_abs_retention",
+        "raw_ic_t_stat",
+        "neutral_ic_t_stat",
+        "raw_rank_ic_mean",
+        "neutral_rank_ic_mean",
+        "rank_ic_abs_decay",
+        "rank_ic_abs_retention",
+        "raw_rank_ic_t_stat",
+        "neutral_rank_ic_t_stat",
+        "raw_positive_rank_ic_ratio",
+        "neutral_positive_rank_ic_ratio",
+        "days",
+        "neutral_days",
+        "avg_cross_section",
+        "neutral_avg_cross_section",
+        "residual_signal_class",
+    ]
+    if ic_table.empty or neutralized_ic_table.empty:
+        return pd.DataFrame(columns=columns)
+
+    raw = ic_table.copy()
+    neutral = neutralized_ic_table.copy()
+    neutral["feature"] = neutral["feature"].astype(str).str.replace(r"__neutral$", "", regex=True)
+    neutral = neutral.rename(columns={"feature": "feature", "days": "neutral_days", "avg_cross_section": "neutral_avg_cross_section"})
+    merged = raw.merge(neutral, on="feature", how="inner", suffixes=("_raw", "_neutral"))
+    if merged.empty:
+        return pd.DataFrame(columns=columns)
+
+    result = pd.DataFrame()
+    result["feature"] = merged["feature"]
+    result["neutralized_feature"] = merged["feature"] + "__neutral"
+    result["raw_ic_mean"] = merged["ic_mean_raw"]
+    result["neutral_ic_mean"] = merged["ic_mean_neutral"]
+    result["ic_abs_decay"] = merged["ic_mean_raw"].abs() - merged["ic_mean_neutral"].abs()
+    result["ic_abs_retention"] = np.where(
+        merged["ic_mean_raw"].abs() > 0,
+        merged["ic_mean_neutral"].abs() / merged["ic_mean_raw"].abs(),
+        np.nan,
+    )
+    result["raw_ic_t_stat"] = merged["ic_t_stat_raw"]
+    result["neutral_ic_t_stat"] = merged["ic_t_stat_neutral"]
+    result["raw_rank_ic_mean"] = merged["rank_ic_mean_raw"]
+    result["neutral_rank_ic_mean"] = merged["rank_ic_mean_neutral"]
+    result["rank_ic_abs_decay"] = merged["rank_ic_mean_raw"].abs() - merged["rank_ic_mean_neutral"].abs()
+    result["rank_ic_abs_retention"] = np.where(
+        merged["rank_ic_mean_raw"].abs() > 0,
+        merged["rank_ic_mean_neutral"].abs() / merged["rank_ic_mean_raw"].abs(),
+        np.nan,
+    )
+    result["raw_rank_ic_t_stat"] = merged["rank_ic_t_stat_raw"]
+    result["neutral_rank_ic_t_stat"] = merged["rank_ic_t_stat_neutral"]
+    result["raw_positive_rank_ic_ratio"] = merged["positive_rank_ic_ratio_raw"]
+    result["neutral_positive_rank_ic_ratio"] = merged["positive_rank_ic_ratio_neutral"]
+    result["days"] = merged["days"]
+    result["neutral_days"] = merged["neutral_days"]
+    result["avg_cross_section"] = merged["avg_cross_section"]
+    result["neutral_avg_cross_section"] = merged["neutral_avg_cross_section"]
+
+    abs_neutral = result["neutral_rank_ic_mean"].abs()
+    retention = result["rank_ic_abs_retention"]
+    neutral_t = result["neutral_rank_ic_t_stat"].abs()
+    result["residual_signal_class"] = np.select(
+        [
+            (abs_neutral >= 0.015) & (neutral_t >= 3.0),
+            (abs_neutral >= 0.008) & (neutral_t >= 2.0) & (retention >= 0.5),
+            (retention < 0.35) | (abs_neutral < 0.005),
+        ],
+        ["strong_residual", "moderate_residual", "mostly_style_or_weak"],
+        default="review",
+    )
+    result["abs_neutral_rank_ic"] = result["neutral_rank_ic_mean"].abs()
+    result = result.sort_values(["abs_neutral_rank_ic", "rank_ic_abs_retention"], ascending=[False, False])
+    return result.drop(columns=["abs_neutral_rank_ic"])
+
+
 def assign_group_quantiles(working: pd.DataFrame, feature: str, quantiles: int, min_cross_section: int) -> pd.DataFrame:
     working = working.replace([np.inf, -np.inf], np.nan).dropna(subset=[feature])
     if working.empty:
@@ -1043,6 +1126,8 @@ def run_factor_validation(
     correlation_table = correlation_table if correlation_table is not None else pd.DataFrame()
     neutralized_ic_table = read_csv_checkpoint(paths["neutralized_ic"])
     neutralized_ic_table = neutralized_ic_table if neutralized_ic_table is not None else pd.DataFrame()
+    neutralization_decay_table = read_csv_checkpoint(paths["neutralization_decay"])
+    neutralization_decay_table = neutralization_decay_table if neutralization_decay_table is not None else pd.DataFrame()
     regime_ic_table = read_csv_checkpoint(paths["regime_ic"])
     regime_ic_table = regime_ic_table if regime_ic_table is not None else pd.DataFrame()
     yearly_quantile_table = read_csv_checkpoint(paths["yearly_quantile"])
@@ -1184,10 +1269,27 @@ def run_factor_validation(
         if skip_neutralized:
             neutralized_ic_table = pd.DataFrame()
             write_csv_checkpoint(neutralized_ic_table, paths["neutralized_ic"])
-            profile_stage(output_dir, "neutralized", "skipped", started_at, df, features, [paths["neutralized_ic"]])
+            neutralization_decay_table = pd.DataFrame()
+            write_csv_checkpoint(neutralization_decay_table, paths["neutralization_decay"])
+            profile_stage(output_dir, "neutralized", "skipped", started_at, df, features, [paths["neutralized_ic"], paths["neutralization_decay"]])
         elif resume and paths["neutralized_ic"].exists():
             neutralized_ic_table = pd.read_csv(paths["neutralized_ic"])
-            profile_stage(output_dir, "neutralized", "resumed", started_at, df, features, [paths["neutralized_ic"]])
+            if ic_table.empty:
+                if paths["ic"].exists():
+                    ic_table = pd.read_csv(paths["ic"])
+                else:
+                    daily_ic_table = compute_daily_ic_table(
+                        df,
+                        features,
+                        validation_config.label_column,
+                        validation_config.min_cross_section,
+                    )
+                    ic_table = summarize_ic_table(daily_ic_table, features)
+                    write_csv_checkpoint(daily_ic_table, paths["daily_ic"])
+                    write_csv_checkpoint(ic_table, paths["ic"])
+            neutralization_decay_table = build_neutralization_decay_table(ic_table, neutralized_ic_table)
+            write_csv_checkpoint(neutralization_decay_table, paths["neutralization_decay"])
+            profile_stage(output_dir, "neutralized", "resumed", started_at, df, features, [paths["neutralized_ic"], paths["neutralization_decay"]])
         else:
             neutralized = build_neutralized_dataset(
                 df,
@@ -1205,7 +1307,22 @@ def run_factor_validation(
                 validation_config.min_cross_section,
             )
             write_csv_checkpoint(neutralized_ic_table, paths["neutralized_ic"])
-            profile_stage(output_dir, "neutralized", "computed", started_at, df, features, [paths["neutralized_ic"]])
+            if ic_table.empty:
+                if paths["ic"].exists():
+                    ic_table = pd.read_csv(paths["ic"])
+                else:
+                    daily_ic_table = compute_daily_ic_table(
+                        df,
+                        features,
+                        validation_config.label_column,
+                        validation_config.min_cross_section,
+                    )
+                    ic_table = summarize_ic_table(daily_ic_table, features)
+                    write_csv_checkpoint(daily_ic_table, paths["daily_ic"])
+                    write_csv_checkpoint(ic_table, paths["ic"])
+            neutralization_decay_table = build_neutralization_decay_table(ic_table, neutralized_ic_table)
+            write_csv_checkpoint(neutralization_decay_table, paths["neutralization_decay"])
+            profile_stage(output_dir, "neutralized", "computed", started_at, df, features, [paths["neutralized_ic"], paths["neutralization_decay"]])
 
     if should_run_stage(stage, "regime-ic"):
         started_at = time.perf_counter()
@@ -1325,6 +1442,8 @@ def run_factor_validation(
         "advanced_features": recommended_features(recommendation_table, "advanced"),
         "dropped_features": recommended_features(recommendation_table, "drop"),
         "top_abs_rank_ic": ic_table.head(10).to_dict(orient="records"),
+        "top_neutralized_rank_ic": neutralized_ic_table.head(10).to_dict(orient="records"),
+        "top_neutralization_decay": neutralization_decay_table.head(10).to_dict(orient="records"),
         "top_abs_long_short": quantile_table.head(10).to_dict(orient="records"),
         "top_holdout_long_short": holdout_quantile.head(10).to_dict(orient="records"),
         "generated_at": utc_now_iso(),

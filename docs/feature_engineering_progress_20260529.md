@@ -1,0 +1,248 @@
+# Feature Engineering Progress - 2026-05-29
+
+## Scope
+
+This report tracks the feature-engineering transition after the GRU head was frozen to the LeakyReLU slope 0.005 variant. The current goal is to move from model-head selection to feature validity, residual alpha, tradability controls, and strict universe filtering.
+
+## Current Status
+
+### 1. Neutralized IC / RankIC
+
+Status: completed for `advanced_sequence_fixed`.
+
+Implemented and run:
+
+```bash
+conda run -n dl_env python scripts/run_factor_validation.py --data-version v20260526 --feature-set advanced_sequence_fixed --stage neutralized --skip-quantile --skip-extended-quantile --neutralized-jobs 4 --neutralized-chunk-size 16
+```
+
+Output directory:
+
+```text
+outputs/factor_validation/v20260526/advanced_sequence_fixed/label_rel_return_q5_cs30_corr0p85_train_all_eval_all_quantile_off_ext_off_neutral_on/
+```
+
+Important outputs:
+
+```text
+factor_ic_rankic.csv
+factor_neutralized_ic.csv
+factor_neutralization_decay.csv
+factor_validation_summary.json
+validation_profile.json
+```
+
+Run profile:
+
+| Item | Value |
+| --- | ---: |
+| Rows | 241,643 |
+| Trade dates | 2,516 |
+| Stocks | 259 |
+| Advanced features | 62 |
+| Neutralized output features | 59 |
+| Runtime | 172.6 seconds |
+| Neutralized skipped | false |
+
+The three missing neutralized output features are expected because they were used as style exposures or skipped as direct exposure columns.
+
+Neutralization currently controls:
+
+- Industry, joined from `data/lake/core/chinext_pool/chinext_pool_scd2.parquet` when the mart dataset has no `industry` column.
+- Size: `lag1_log_circ_mv`, fallback `lag1_log_total_mv`, fallback `lag1_industry_mv_rank`.
+- Liquidity: `lag1_turnover_rate_f`, fallback `lag1_turnover_rate`, `lag1_turnover_20d_mean`, `lag1_turnover_60d_mean`, `lag1_amount_log`, `lag1_amount_rank_pct`.
+- Volatility: `lag1_ret_20d_std`, fallback `lag1_ret_60d_std`, `lag1_amplitude`, `lag1_volume_ratio`.
+- Momentum: `lag1_ret_20d_mean`, fallback `lag1_ret_60d_mean`, `lag1_ret_20d`, `lag1_ret_5d_mean`, `lag1_ret_5d`.
+
+Top residual RankIC features:
+
+| Feature | Neutralized RankIC | RankIC t-stat | Interpretation |
+| --- | ---: | ---: | --- |
+| `lag1_limit_touch_up__neutral` | 0.02111 | 4.80 | Strong residual signal, but should be risk/tradability-gated before alpha use. |
+| `lag1_near_limit_up_2pct__neutral` | 0.02021 | 4.48 | Strong residual signal, same caution as above. |
+| `lag1_bollinger_z_20d__neutral` | -0.01664 | -7.74 | Residual short-term reversal / overextension signal. |
+| `lag1_ret_5d_mean__neutral` | -0.01653 | -7.50 | Residual short-horizon reversal signal. |
+| `lag1_excess_ret_5d_mean__neutral` | -0.01640 | -7.46 | Residual benchmark-relative reversal signal. |
+| `lag1_ret_5d__neutral` | -0.01538 | -7.01 | Residual short-horizon reversal signal. |
+| `lag1_amount_rank_pct__neutral` | -0.01360 | -6.83 | Still carries residual information, but belongs to liquidity/risk-control review. |
+| `lag1_price_to_ma20__neutral` | -0.01352 | -6.18 | Residual overextension signal. |
+| `lag1_excess_ret_10d_mean__neutral` | -0.01134 | -5.31 | Medium-short residual reversal signal. |
+| `lag1_amount_log__neutral` | -0.00974 | -4.90 | Liquidity/amount residual remains, should be constrained. |
+
+Important decay observations:
+
+- Raw turnover proxies were among the strongest raw RankIC signals:
+  - `lag1_turnover_cost_proxy`: raw RankIC -0.04365.
+  - `lag1_turnover_rate`: raw RankIC -0.04356.
+  - `lag1_turnover_rate_f`: raw RankIC -0.04279.
+- After neutralization, the strongest residuals shift away from pure turnover and toward:
+  - limit-state / near-limit signals,
+  - short-term reversal,
+  - amount/liquidity residuals,
+  - selected money-flow strength features.
+- `lag1_month__neutral` has high absolute mean RankIC but weak t-stat, so it should not be promoted as a robust alpha feature.
+
+Neutralization decay table:
+
+Status: completed.
+
+Output:
+
+```text
+outputs/factor_validation/v20260526/advanced_sequence_fixed/label_rel_return_q5_cs30_corr0p85_train_all_eval_all_quantile_off_ext_off_neutral_on/factor_neutralization_decay.csv
+```
+
+The table compares raw IC/RankIC with neutralized IC/RankIC and includes:
+
+- raw and neutralized IC mean,
+- raw and neutralized RankIC mean,
+- absolute decay,
+- retention ratio,
+- raw and neutralized t-stat,
+- positive RankIC ratio,
+- residual signal class.
+
+Residual signal class counts:
+
+| Class | Count | Meaning |
+| --- | ---: | --- |
+| `strong_residual` | 6 | Residual RankIC remains strong after neutralization. |
+| `moderate_residual` | 5 | Residual signal remains usable but should be reviewed with role constraints. |
+| `review` | 14 | Mixed evidence or unstable statistics. |
+| `mostly_style_or_weak` | 34 | Mostly explained by neutralized exposures or too weak after controls. |
+
+Top decay-table rows by residual RankIC strength:
+
+| Feature | Raw RankIC | Neutralized RankIC | Retention | Class |
+| --- | ---: | ---: | ---: | --- |
+| `lag1_limit_touch_up` | -0.02068 | 0.02111 | 1.021 | `strong_residual` |
+| `lag1_near_limit_up_2pct` | -0.01873 | 0.02021 | 1.079 | `strong_residual` |
+| `lag1_month` | 0.02189 | -0.01932 | 0.883 | `review` |
+| `lag1_bollinger_z_20d` | -0.02552 | -0.01664 | 0.652 | `strong_residual` |
+| `lag1_ret_5d_mean` | -0.02776 | -0.01653 | 0.596 | `strong_residual` |
+| `lag1_excess_ret_5d_mean` | -0.02775 | -0.01640 | 0.591 | `strong_residual` |
+| `lag1_ret_5d` | -0.02655 | -0.01538 | 0.579 | `strong_residual` |
+| `lag1_amount_rank_pct` | -0.02659 | -0.01360 | 0.512 | `moderate_residual` |
+| `lag1_price_to_ma20` | -0.02541 | -0.01352 | 0.532 | `moderate_residual` |
+| `lag1_excess_ret_10d_mean` | -0.02649 | -0.01134 | 0.428 | `review` |
+
+### 2. Turnover / Amount / Size / Volatility Residualization
+
+Status: partially completed.
+
+Completed:
+
+- Residualized all evaluated advanced features against industry plus size, liquidity, volatility, and momentum exposures.
+- The neutralized IC table provides the first residual-alpha evidence layer.
+
+Still required:
+
+- Create explicit residualized feature columns for training, not just validation-time residual IC.
+- Split raw style-control features into:
+  - alpha-eligible residualized variants,
+  - risk/tradability controls,
+  - excluded raw style exposures.
+- Decide whether direct exposure columns such as turnover, amount, size, and volatility should be excluded from GRU inputs or retained only as controls.
+
+### 3. Collinearity Deletion / Merge
+
+Status: not completed in this branch.
+
+Existing evidence indicates high redundancy among:
+
+- Turnover family: `turnover_rate`, `turnover_rate_f`, `turnover_cost_proxy`, rolling turnover means/stds.
+- Amount family: `amount_log`, `amount_rank_pct`, rolling amount means.
+- Momentum / reversal family: `ret_5d`, `ret_5d_mean`, `excess_ret_5d_mean`, moving-average distance features.
+- Technical family: MACD variants, Bollinger/MA ratio/price-to-MA.
+
+Next action:
+
+- Produce a feature-group pruning table for `advanced_sequence_fixed`.
+- Keep one representative alpha feature per highly correlated group, unless a member is explicitly reclassified as a risk/tradability control.
+- Generate a new candidate feature set, likely `advanced_sequence_residual_v1`.
+
+### 4. Tradability / Risk Controls
+
+Status: design decided, implementation pending.
+
+The following should be moved away from raw alpha status:
+
+- `lag1_dist_to_limit_up`
+- `lag1_dist_to_limit_down`
+- `lag1_near_limit_up_2pct`
+- `lag1_near_limit_down_2pct`
+- `lag1_limit_touch_up`
+- `lag1_limit_touch_down`
+- `lag1_limit_position`
+- liquidity and amount proxies
+
+Reason:
+
+- Some limit-state features show strong residual IC, but they are tightly coupled to execution feasibility and limit-lock risk.
+- They should be used for stock-pool filtering, post-score gating, or portfolio constraints before being trusted as alpha drivers.
+
+Next action:
+
+- Add feature-role metadata: `alpha`, `risk_control`, `tradability_control`, `exclude`.
+- Update dataset-building logic so risk controls can be retained for filtering/reporting without automatically entering the GRU alpha input tensor.
+
+### 5. Strict Stock-Pool Filtering
+
+Status: not completed.
+
+Required filters:
+
+- Remove ST and `*ST`.
+- Remove long suspensions.
+- Remove very low liquidity names, for example average daily amount below a chosen threshold.
+- Remove bottom market-cap toxic microcaps.
+- Remove locked limit-up / limit-down samples from executable trading labels or portfolio selection.
+
+Current available infrastructure:
+
+- `data/lake/state/security_daily_state.parquet` is configured as the daily state source.
+- `chinext_pool_scd2.parquet` provides pool membership and industry.
+- Limit-state features already exist in the mart feature table.
+
+Next action:
+
+- Build a strict tradable mask table by `trade_date, ts_code`.
+- Apply it to factor validation first, then to sequence dataset construction.
+- Record filtering counts by date and reason.
+
+## Recommended Task Order
+
+### P0 - Evidence And Governance
+
+1. Add a neutralization decay report:
+   - raw RankIC,
+   - neutralized RankIC,
+   - absolute decay,
+   - retention ratio,
+   - t-stat change.
+2. Classify advanced features into alpha/risk/tradability/exclude roles.
+3. Produce a collinearity pruning proposal using the advanced fixed feature set.
+
+### P1 - Dataset Construction
+
+4. Implement residualized feature generation for turnover, amount, size, and volatility families.
+5. Create `advanced_sequence_residual_v1`.
+6. Build strict tradable universe masks and filter logs.
+
+### P2 - Model And Portfolio Recheck
+
+7. Train the frozen LeakyReLU slope 0.005 GRU on the cleaned/residualized dataset.
+8. Recompute IC, neutralized IC for model `pred_score`, Top-K, and long-short backtest.
+9. Compare against the frozen pre-cleaning GRU baseline and document whether residual alpha survives.
+
+## Current Verdict
+
+The project has completed the first residual-alpha audit layer. The result is constructive but not yet sufficient for a tradable claim.
+
+The main conclusion is:
+
+```text
+Raw style-heavy signals weaken after neutralization, but several residual effects remain, especially near-limit state and short-term reversal features.
+```
+
+The next milestone is not another model tuning pass. It is feature governance: residualized feature construction, collinearity pruning, role separation, and strict tradable-universe filtering.
