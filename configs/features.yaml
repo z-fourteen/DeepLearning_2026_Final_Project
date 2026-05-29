@@ -203,6 +203,25 @@ feature_sets:
       - lag1_gap_open
       - lag1_weekday
       - lag1_month
+  advanced_sequence_clean_v1:
+    source: "feature_engineering_20260529_alpha_pruned"
+    include_prefixes: ["lag1_"]
+    sequence_windows: [20, 60]
+    role_config: "configs/feature_sets/advanced_sequence_clean_v1.yaml"
+    selected_features:
+      - lag1_net_mf_strength_20d_mean
+      - lag1_net_mf_strength_60d_mean
+      - lag1_close_position
+      - lag1_excess_ret_10d_mean
+      - lag1_excess_ret_1d
+      - lag1_excess_ret_5d_mean
+      - lag1_industry_neutral_ret_1d
+      - lag1_ret_1d
+      - lag1_ret_20d
+      - lag1_ret_5d_mean
+      - lag1_bollinger_z_20d
+      - lag1_ma_ratio_20_60
+      - lag1_macd_hist
   dropped_after_validation:
     - lag1_is_limit_down
     - lag1_is_limit_up

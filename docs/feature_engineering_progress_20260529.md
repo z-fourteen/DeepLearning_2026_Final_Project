@@ -322,6 +322,73 @@ Next action:
 - Combine the 13 pruned alpha features with residualized style families and external control masks.
 - Generate a new candidate feature set, likely `advanced_sequence_residual_v1`.
 
+### 3A. Cleaned Feature Set Draft
+
+Status: completed as a draft config.
+
+Generated:
+
+```text
+configs/feature_sets/advanced_sequence_clean_v1.yaml
+outputs/factor_validation/advanced_sequence_fixed/label_rel_return_q5_cs30_corr0p85_train_all_eval_all_quantile_off_ext_off_neutral_on/advanced_sequence_clean_v1_summary.json
+```
+
+Registered in:
+
+```text
+configs/features.yaml
+```
+
+Validation command:
+
+```bash
+conda run -n dl_env python scripts/validate_clean_feature_set.py
+```
+
+Validation result:
+
+| Group | Count |
+| --- | ---: |
+| `alpha_features` | 13 |
+| `risk_controls` | 13 |
+| `tradability_controls` | 23 |
+| `excluded_features` | 10 |
+
+Checks:
+
+- `selected_features` in `configs/features.yaml` matches `alpha_features`.
+- No overlaps across alpha, risk, tradability, and excluded groups.
+- All configured features exist in `data/mart/datasets/dataset_v20260526.parquet`.
+
+Important implementation detail:
+
+- `advanced_sequence_clean_v1.selected_features` currently contains only the 13 pruned alpha features.
+- Risk controls and tradability controls are intentionally not included in the raw GRU tensor by default.
+- Residualized style features are declared as planned under `residualized_style_features`, but the actual residualized columns have not yet been materialized into a dataset.
+
+Current clean-v1 alpha tensor:
+
+```text
+lag1_net_mf_strength_20d_mean
+lag1_net_mf_strength_60d_mean
+lag1_close_position
+lag1_excess_ret_10d_mean
+lag1_excess_ret_1d
+lag1_excess_ret_5d_mean
+lag1_industry_neutral_ret_1d
+lag1_ret_1d
+lag1_ret_20d
+lag1_ret_5d_mean
+lag1_bollinger_z_20d
+lag1_ma_ratio_20_60
+lag1_macd_hist
+```
+
+Next action:
+
+- Implement residualized feature generation for selected turnover/amount/style families.
+- Implement strict tradable mask generation before training this cleaned feature set as the next GRU dataset.
+
 ### 4. Tradability / Risk Controls
 
 Status: design decided, implementation pending.
@@ -407,4 +474,106 @@ Raw style-heavy signals weaken after neutralization, but several residual effect
 ```
 
 The next milestone is not another model tuning pass. It is feature governance: residualized feature construction, collinearity pruning, role separation, and strict tradable-universe filtering.
+
+## 2026-05-29 Update - Clean Dataset Builder
+
+Status: initial builder completed.
+
+New independent entrypoints:
+
+- `pipelines/mart/clean_dataset.py`
+- `scripts/build_clean_model_datasets.py`
+- `configs/feature_sets/advanced_sequence_clean_v1.yaml`
+
+Design decision:
+
+- The original dataset builder is kept unchanged as the legacy/baseline path.
+- The clean builder reads role metadata from `advanced_sequence_clean_v1`.
+- Model tensors are separated from controls:
+  - `alpha_only`: 13 pruned alpha features only.
+  - `alpha_plus_residual_style`: 13 alpha features plus 5 initial residualized style features.
+  - risk and tradability controls are exported to sidecar parquet rather than fed directly into the GRU tensor.
+
+Generated datasets:
+
+- `data/mart/datasets/dataset_seq_l20_adv_clean_v1_alpha_only_chinext_2016_2026.npz`
+  - X shape: `(196138, 20, 13)`
+  - y shape: `(196138,)`
+  - split counts: train 124527, validation 42759, test 28852
+- `data/mart/datasets/dataset_seq_l20_adv_clean_v1_alpha_resid_style_chinext_2016_2026.npz`
+  - X shape: `(196138, 20, 18)`
+  - y shape: `(196138,)`
+  - split counts: train 124527, validation 42759, test 28852
+
+Residualized style features currently included:
+
+- `lag1_turnover_cost_proxy__resid_style`
+- `lag1_turnover_20d_std__resid_style`
+- `lag1_turnover_60d_std__resid_style`
+- `lag1_amount_rank_pct__resid_style`
+- `lag1_amount_log__resid_style`
+
+Validation commands:
+
+```bash
+conda run -n dl_env python scripts/validate_clean_feature_set.py
+conda run -n dl_env python scripts/build_clean_model_datasets.py --data-version v20260526 --build-mode alpha_only --lookbacks 20
+conda run -n dl_env python scripts/build_clean_model_datasets.py --data-version v20260526 --build-mode alpha_plus_residual_style --lookbacks 20
+```
+
+Remaining before final feature-pool freeze:
+
+- Train frozen-head GRU on both clean datasets.
+- Compare `alpha_only` vs `alpha_plus_residual_style` using IC, neutralized IC, RankIC, and Top-K/backtest metrics.
+- Audit strict tradable mask thresholds and sensitivity.
+
+## 2026-05-29 Update - Strict Tradable Mask
+
+Status: initial mask implemented in the clean dataset builder.
+
+Policy:
+
+- Strict tradable mask is a sample filter and execution-feasibility control.
+- Mask/state columns are not appended to the model input tensor.
+- Filter decisions are recorded in manifest and filter-log CSV files.
+
+Current filters:
+
+- Require matching row in `data/lake/state/security_daily_state.parquet`.
+- Require `is_tradable`, valid price, valid volume.
+- Remove ST / suspended rows through state flags.
+- Remove locked limit-up / limit-down execution samples.
+- Remove low-liquidity rows using `lag1_amount_20d_mean < 70000` and bottom 5% by date.
+- Remove microcap rows using bottom 5% of `lag1_log_circ_mv` by date.
+
+Filter result before sequence windowing:
+
+- Input panel rows: 241643
+- Kept rows: 211978
+- Dropped rows: 29665
+- Drop rate: 12.28%
+
+Reason counts:
+
+- `mask_locked_limit`: 2023
+- `mask_low_amount`: 20253
+- `mask_microcap`: 12827
+- `mask_state_missing`: 0
+- `mask_state_not_tradable`: 0
+- `mask_st`: 0
+- `mask_suspended`: 0
+- `mask_price_invalid`: 0
+- `mask_volume_invalid`: 0
+
+Outputs:
+
+- `data/mart/datasets/dataset_seq_l20_adv_clean_v1_alpha_only_chinext_2016_2026_filter_log.csv`
+- `data/mart/datasets/dataset_seq_l20_adv_clean_v1_alpha_resid_style_chinext_2016_2026_filter_log.csv`
+
+Verification:
+
+- `alpha_only` model tensor remains 13 features.
+- `alpha_resid_style` model tensor remains 18 features.
+- Sidecar contains `strict_tradable` and mask reason columns.
+- Final sidecar rows are all `strict_tradable=True`.
 
