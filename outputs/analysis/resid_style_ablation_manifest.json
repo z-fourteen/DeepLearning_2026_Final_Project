@@ -1,0 +1,44 @@
+{
+  "ablations": [
+    {
+      "dropped_feature": "lag1_turnover_cost_proxy__resid_style",
+      "slug": "drop_turnover_cost_proxy_resid",
+      "npz_path": "data\\mart\\datasets\\dataset_seq_l20_adv_clean_v1_alpha_resid_style_drop_turnover_cost_proxy_resid_chinext_2016_2026.npz",
+      "config_path": "configs\\sequence_gru_l20_alpha_resid_style_drop_turnover_cost_proxy_resid_leaky0005.yaml",
+      "num_features": 17,
+      "samples": 196138
+    },
+    {
+      "dropped_feature": "lag1_turnover_20d_std__resid_style",
+      "slug": "drop_turnover_20d_std_resid",
+      "npz_path": "data\\mart\\datasets\\dataset_seq_l20_adv_clean_v1_alpha_resid_style_drop_turnover_20d_std_resid_chinext_2016_2026.npz",
+      "config_path": "configs\\sequence_gru_l20_alpha_resid_style_drop_turnover_20d_std_resid_leaky0005.yaml",
+      "num_features": 17,
+      "samples": 196138
+    },
+    {
+      "dropped_feature": "lag1_turnover_60d_std__resid_style",
+      "slug": "drop_turnover_60d_std_resid",
+      "npz_path": "data\\mart\\datasets\\dataset_seq_l20_adv_clean_v1_alpha_resid_style_drop_turnover_60d_std_resid_chinext_2016_2026.npz",
+      "config_path": "configs\\sequence_gru_l20_alpha_resid_style_drop_turnover_60d_std_resid_leaky0005.yaml",
+      "num_features": 17,
+      "samples": 196138
+    },
+    {
+      "dropped_feature": "lag1_amount_rank_pct__resid_style",
+      "slug": "drop_amount_rank_pct_resid",
+      "npz_path": "data\\mart\\datasets\\dataset_seq_l20_adv_clean_v1_alpha_resid_style_drop_amount_rank_pct_resid_chinext_2016_2026.npz",
+      "config_path": "configs\\sequence_gru_l20_alpha_resid_style_drop_amount_rank_pct_resid_leaky0005.yaml",
+      "num_features": 17,
+      "samples": 196138
+    },
+    {
+      "dropped_feature": "lag1_amount_log__resid_style",
+      "slug": "drop_amount_log_resid",
+      "npz_path": "data\\mart\\datasets\\dataset_seq_l20_adv_clean_v1_alpha_resid_style_drop_amount_log_resid_chinext_2016_2026.npz",
+      "config_path": "configs\\sequence_gru_l20_alpha_resid_style_drop_amount_log_resid_leaky0005.yaml",
+      "num_features": 17,
+      "samples": 196138
+    }
+  ]
+}
