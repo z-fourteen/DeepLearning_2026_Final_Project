@@ -577,3 +577,51 @@ Verification:
 - Sidecar contains `strict_tradable` and mask reason columns.
 - Final sidecar rows are all `strict_tradable=True`.
 
+## 2026-05-29 Update - Clean GRU Training Prep
+
+Status: configs created and smoke checked.
+
+Training configs:
+
+- `configs/sequence_gru_l20_clean_alpha_only_strictmask_leaky0005.yaml`
+- `configs/sequence_gru_l20_clean_alpha_resid_style_strictmask_leaky0005.yaml`
+
+Both configs use:
+
+- strict-mask clean datasets,
+- frozen GRU backbone settings from the selected baseline,
+- `head_activation: leaky_relu`,
+- `head_negative_slope: 0.005`,
+- `loss_fn: mse_ic`,
+- `batch_mode: date`.
+
+Dataset bindings:
+
+- `alpha_only`: `data/mart/datasets/dataset_seq_l20_adv_clean_v1_alpha_only_chinext_2016_2026.npz`
+  - train 124527, validation 42759, test 28852
+  - num_features 13
+- `alpha_resid_style`: `data/mart/datasets/dataset_seq_l20_adv_clean_v1_alpha_resid_style_chinext_2016_2026.npz`
+  - train 124527, validation 42759, test 28852
+  - num_features 18
+
+Smoke checks:
+
+- Dry-run passed for both configs.
+- Training script was fixed so validation and test loaders also follow `batch_mode: date`.
+- Short CPU smoke training completed for both configs with limited train/validation/test date batches.
+- Both smoke runs produced valid daily IC / RankIC with `daily_status=ok` and `daily_coverage_ratio=1.0`.
+- `alpha_only` smoke best RankIC: -0.10135 over 5 validation dates.
+- `alpha_resid_style` smoke best RankIC: -0.06031 over 5 validation dates.
+
+Next training commands:
+
+```bash
+conda run -n dl_env python scripts/train_sequence.py --config configs/sequence_gru_l20_clean_alpha_only_strictmask_leaky0005.yaml --device cuda
+conda run -n dl_env python scripts/train_sequence.py --config configs/sequence_gru_l20_clean_alpha_resid_style_strictmask_leaky0005.yaml --device cuda
+```
+
+Post-training requirement:
+
+- Evaluate model `pred_score` with raw IC / RankIC and neutralized IC / RankIC.
+- Compare old frozen baseline vs `alpha_only` vs `alpha_resid_style`.
+
