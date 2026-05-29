@@ -1,17 +1,17 @@
 from __future__ import annotations
 
-import json
 from pathlib import Path
 from typing import Any
 
 import numpy as np
 import pandas as pd
 
-
 RUN_DIRS = {
     "old_full62": Path("outputs/runs/gru_l20_mse_ic_leaky_head_slope_0005"),
     "new_alpha13": Path("outputs/runs/gru_l20_clean_alpha_only_strictmask_leaky0005"),
-    "new_alpha18_resid": Path("outputs/runs/gru_l20_clean_alpha_resid_style_strictmask_leaky0005"),
+    "new_alpha18_resid": Path(
+        "outputs/runs/gru_l20_clean_alpha_resid_style_strictmask_leaky0005"
+    ),
 }
 
 SIDECAR = Path(
@@ -84,8 +84,12 @@ def daily_ic(frame: pd.DataFrame, score_col: str = "pred_score") -> pd.DataFrame
                 "split": split,
                 "trade_date": date,
                 "year": str(date)[:4],
-                "ic": group[score_col].corr(group["label_rel_return"], method="pearson"),
-                "rank_ic": group[score_col].corr(group["label_rel_return"], method="spearman"),
+                "ic": group[score_col].corr(
+                    group["label_rel_return"], method="pearson"
+                ),
+                "rank_ic": group[score_col].corr(
+                    group["label_rel_return"], method="spearman"
+                ),
                 "n": len(group),
             }
         )
@@ -121,12 +125,19 @@ def common_universe_metrics(preds: dict[str, pd.DataFrame]) -> pd.DataFrame:
     rows: list[dict[str, Any]] = []
     for run in ["new_alpha13", "new_alpha18_resid"]:
         merged = preds[run][["trade_date", "ts_code", "split", "pred_score"]].merge(
-            old, on=["trade_date", "ts_code", "split"], how="inner", validate="one_to_one"
+            old,
+            on=["trade_date", "ts_code", "split"],
+            how="inner",
+            validate="one_to_one",
         )
         for split, group in merged.groupby("split", sort=True):
-            for score_col, label in [("old_score", "old_on_clean_common"), ("pred_score", run)]:
+            for score_col, label in [
+                ("old_score", "old_on_clean_common"),
+                ("pred_score", run),
+            ]:
                 daily = daily_ic(
-                    group.rename(columns={score_col: "score_for_eval"}), score_col="score_for_eval"
+                    group.rename(columns={score_col: "score_for_eval"}),
+                    score_col="score_for_eval",
                 )
                 rows.append(
                     {
@@ -136,7 +147,9 @@ def common_universe_metrics(preds: dict[str, pd.DataFrame]) -> pd.DataFrame:
                         "rows": int(len(group)),
                         "dates": int(group["trade_date"].nunique()),
                         "score_corr_with_other": float(
-                            group["pred_score"].corr(group["old_score"], method="spearman")
+                            group["pred_score"].corr(
+                                group["old_score"], method="spearman"
+                            )
                         ),
                         "ic_mean": float(daily["ic"].mean()),
                         "rank_ic_mean": float(daily["rank_ic"].mean()),
@@ -146,16 +159,22 @@ def common_universe_metrics(preds: dict[str, pd.DataFrame]) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
-def topk_overlap(preds: dict[str, pd.DataFrame], k_values: tuple[int, ...] = (10, 20, 30)) -> pd.DataFrame:
+def topk_overlap(
+    preds: dict[str, pd.DataFrame], k_values: tuple[int, ...] = (10, 20, 30)
+) -> pd.DataFrame:
     rows: list[dict[str, Any]] = []
-    pairs = [("old_full62", "new_alpha13"), ("old_full62", "new_alpha18_resid"), ("new_alpha13", "new_alpha18_resid")]
+    pairs = [
+        ("old_full62", "new_alpha13"),
+        ("old_full62", "new_alpha18_resid"),
+        ("new_alpha13", "new_alpha18_resid"),
+    ]
     for left_name, right_name in pairs:
-        left = preds[left_name][["trade_date", "ts_code", "split", "pred_score"]].rename(
-            columns={"pred_score": "left_score"}
-        )
-        right = preds[right_name][["trade_date", "ts_code", "split", "pred_score"]].rename(
-            columns={"pred_score": "right_score"}
-        )
+        left = preds[left_name][
+            ["trade_date", "ts_code", "split", "pred_score"]
+        ].rename(columns={"pred_score": "left_score"})
+        right = preds[right_name][
+            ["trade_date", "ts_code", "split", "pred_score"]
+        ].rename(columns={"pred_score": "right_score"})
         merged = left.merge(right, on=["trade_date", "ts_code", "split"], how="inner")
         for split, split_frame in merged.groupby("split", sort=True):
             for k in k_values:
@@ -167,7 +186,11 @@ def topk_overlap(preds: dict[str, pd.DataFrame], k_values: tuple[int, ...] = (10
                     left_top = set(group.nlargest(k, "left_score")["ts_code"])
                     right_top = set(group.nlargest(k, "right_score")["ts_code"])
                     overlaps.append(len(left_top & right_top) / k)
-                    corrs.append(group["left_score"].corr(group["right_score"], method="spearman"))
+                    corrs.append(
+                        group["left_score"].corr(
+                            group["right_score"], method="spearman"
+                        )
+                    )
                 rows.append(
                     {
                         "pair": f"{left_name}__{right_name}",
@@ -183,13 +206,20 @@ def topk_overlap(preds: dict[str, pd.DataFrame], k_values: tuple[int, ...] = (10
     return pd.DataFrame(rows)
 
 
-def style_exposure(preds: dict[str, pd.DataFrame], sidecar: pd.DataFrame, k_values: tuple[int, ...] = (10, 30)) -> pd.DataFrame:
+def style_exposure(
+    preds: dict[str, pd.DataFrame],
+    sidecar: pd.DataFrame,
+    k_values: tuple[int, ...] = (10, 30),
+) -> pd.DataFrame:
     rows: list[dict[str, Any]] = []
     controls = ["trade_date", "ts_code", "split", *STYLE_COLUMNS]
     side = sidecar[controls].copy()
     for run, pred in preds.items():
         merged = pred[["trade_date", "ts_code", "split", "pred_score"]].merge(
-            side, on=["trade_date", "ts_code", "split"], how="inner", validate="one_to_one"
+            side,
+            on=["trade_date", "ts_code", "split"],
+            how="inner",
+            validate="one_to_one",
         )
         for split, split_frame in merged.groupby("split", sort=True):
             for k in k_values:
@@ -240,20 +270,29 @@ def alpha_feature_ic(sidecar: pd.DataFrame) -> pd.DataFrame:
     mart = pd.read_parquet(MART, columns=mart_cols)
     mart["trade_date"] = mart["trade_date"].astype(str)
     mart["ts_code"] = mart["ts_code"].astype(str)
-    merged = keys.merge(mart, on=["trade_date", "ts_code"], how="inner", validate="one_to_one")
+    merged = keys.merge(
+        mart, on=["trade_date", "ts_code"], how="inner", validate="one_to_one"
+    )
 
     rows: list[dict[str, Any]] = []
     for split, split_frame in merged.groupby("split", sort=True):
         for feature in features:
             daily_rows: list[dict[str, float]] = []
             for date, group in split_frame.groupby("trade_date", sort=True):
-                if group[feature].nunique() <= 1 or group["label_rel_return"].nunique() <= 1:
+                if (
+                    group[feature].nunique() <= 1
+                    or group["label_rel_return"].nunique() <= 1
+                ):
                     continue
                 daily_rows.append(
                     {
                         "trade_date": date,
-                        "ic": group[feature].corr(group["label_rel_return"], method="pearson"),
-                        "rank_ic": group[feature].corr(group["label_rel_return"], method="spearman"),
+                        "ic": group[feature].corr(
+                            group["label_rel_return"], method="pearson"
+                        ),
+                        "rank_ic": group[feature].corr(
+                            group["label_rel_return"], method="spearman"
+                        ),
                     }
                 )
             daily = pd.DataFrame(daily_rows)
