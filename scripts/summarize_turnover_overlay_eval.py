@@ -12,9 +12,6 @@ RUNS = {
     "old_full62_strictmask_overlay": Path(
         "outputs/runs/gru_l20_mse_ic_leaky_head_slope_0005_strictmask_overlay"
     ),
-    "legacy62_strictmask_retrain": Path(
-        "outputs/runs/gru_l20_legacy_full_strictmask_leaky0005"
-    ),
 }
 
 

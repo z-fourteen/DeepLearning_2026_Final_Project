@@ -11,11 +11,10 @@ import pandas as pd
 from pipelines.ingest.agent import load_yaml
 
 
-BUILD_MODES = {"alpha_only", "alpha_plus_residual_style", "legacy_full"}
+BUILD_MODES = {"alpha_only", "alpha_plus_residual_style"}
 BUILD_MODE_SLUGS = {
     "alpha_only": "alpha_only",
     "alpha_plus_residual_style": "alpha_resid_style",
-    "legacy_full": "legacy_full",
 }
 MASK_COLUMNS = [
     "strict_tradable",
@@ -326,7 +325,6 @@ def residual_candidate_features(clean_config: dict[str, Any]) -> list[str]:
 
 
 def build_feature_frame(
-    project_root: Path,
     df: pd.DataFrame,
     clean_config: dict[str, Any],
     build_mode: str,
@@ -334,11 +332,7 @@ def build_feature_frame(
     if build_mode not in BUILD_MODES:
         raise ValueError(f"Unsupported build mode: {build_mode}")
 
-    if build_mode == "legacy_full":
-        features_config = load_yaml(project_root / "configs" / "features.yaml")
-        alpha_features = list(features_config["feature_sets"]["advanced_sequence_fixed"]["selected_features"])
-    else:
-        alpha_features = list(clean_config.get("alpha_features", []))
+    alpha_features = list(clean_config.get("alpha_features", []))
     risk_controls = list(clean_config.get("risk_controls", []))
     tradability_controls = list(clean_config.get("tradability_controls", []))
     missing_alpha = [feature for feature in alpha_features if feature not in df.columns]
@@ -412,7 +406,6 @@ def build_clean_sequence_dataset(
     clean_config = load_clean_feature_config(project_root, clean_config_path)
     df = read_mart_dataset(project_root, data_version)
     feature_frame, model_features, risk_controls, tradability_controls = build_feature_frame(
-        project_root,
         df,
         clean_config,
         build_mode,
