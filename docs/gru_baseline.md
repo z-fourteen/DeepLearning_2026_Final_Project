@@ -1,15 +1,51 @@
-# GRU Baseline Mainline - LeakyReLU Slope 0.005
+# GRU Mainline - Strict Mask K20 Keep2
 
 ## Status
-- Baseline version: frozen current mainline baseline
+- Baseline version: promoted tradable GRU mainline
 - Model: GRU Baseline
-- Mainline run: `outputs/runs/gru_l20_mse_ic_leaky_head_slope_0005/`
+- Mainline score run: `outputs/runs/gru_l20_mse_ic_leaky_head_slope_0005/`
+- Mainline strategy run: `outputs/runs/gru_l20_mse_ic_leaky_head_slope_0005_strictmask_overlay/`
+- Mainline strategy config: `configs/gru_mainline_strategy.yaml`
 - Mainline config: `configs/sequence_gru_l20_mse_ic_frozen_head.yaml`
 - Recorded date: 2026-05-29
 - Upload policy: local run artifacts are excluded from Git by `.gitignore`.
-- Baseline decision: `gru_l20_mse_ic_leaky_head_slope_0005` is the GRU baseline mainline.
+- Baseline decision: old GRU baseline scores plus strict tradable mask plus K20 keep=2x turnover buffer is the GRU mainline strategy.
 - Historical versions kept only for traceback: `e02_gru_l20_mse_ic_02`, `gru_l20_mse_ic_gelu_head`, `gru_l20_mse_ic_leaky_head_001`, and stable variants.
 - Historical versions should not be used for new experiments unless explicitly doing retrospective comparison.
+
+## Mainline Strategy
+- Score source: `outputs/runs/gru_l20_mse_ic_leaky_head_slope_0005/predictions.parquet`
+- Execution universe: strict tradable mask from `data/mart/datasets/dataset_seq_l20_adv_clean_v1_alpha_only_chinext_2016_2026_filter_log.csv`
+- Overlay predictions: `outputs/runs/gru_l20_mse_ic_leaky_head_slope_0005_strictmask_overlay/predictions.parquet`
+- Portfolio rule: equal-weight Top20 long portfolio.
+- Turnover buffer: keep existing names while their current rank remains within Top40, because `K=20` and `keep_multiplier=2.0`.
+- Rebalance: every 5 signal dates.
+- Holding window: non-overlapping 5-day proxy.
+- Main cost setting: 10 bps one-way transaction cost.
+- Mainline analysis output: `outputs/analysis/gru_mainline_strategy/`
+
+Promotion rationale:
+- Strict mask overlay keeps the old score's test RankIC intact: old baseline RankIC `0.0544`, overlay RankIC `0.0564`.
+- Retraining the 62-feature model on strict-mask samples was rejected as a failed experiment because test RankIC fell to about `0.0171`.
+- K20 keep=2x is the stable compromise: it materially lowers turnover while keeping positive excess return.
+
+Mainline test result at 10 bps:
+
+| Strategy | K | Keep | Top annualized | Excess vs universe annualized | Long-short annualized | Top turnover | Max drawdown |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| strictmask overlay | 20 | 2.0x | 0.5985 | 0.0684 | 0.1457 | 0.6485 | -0.1818 |
+
+Comparison with no turnover buffer:
+
+| Strategy | K | Keep | Top annualized | Excess vs universe annualized | Top turnover |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| strictmask overlay | 20 | 1.0x | 0.7277 | 0.1494 | 1.1152 |
+| strictmask overlay | 20 | 2.0x | 0.5985 | 0.0684 | 0.6485 |
+
+Interpretation:
+- K20 keep=2x gives up some raw annualized return in exchange for a roughly 42% reduction in top-leg turnover versus the same strict-mask overlay without a buffer.
+- This is now the default robust GRU strategy for reporting and downstream comparison.
+- K30 keep=2x and K30 keep=3x remain sensitivity checks, not the promoted mainline.
 
 ## Data Interface
 - Dataset: sequence NPZ
@@ -224,13 +260,21 @@ Top10 failure interpretation:
 - Liquidity and volatility filters are still useful, but they should be treated as secondary ablations after fixing or bypassing the tied-score head.
 
 ## Assessment
-`gru_l20_mse_ic_leaky_head_slope_0005` is the frozen GRU baseline mainline. The earlier ReLU, GELU, parent LeakyReLU, and stable runs are historical versions kept only for traceback. The mainline keeps the date-aware MSE+IC GRU backbone while replacing the saturated ReLU head with a LeakyReLU slope-0.005 head. This fixes the head-resolution failure and makes Top-K diagnostics more meaningful, but it does not yet establish a final tradable strategy. High turnover, weak validation long-short performance after cost, incomplete feature/style neutralization, and tradability constraints remain first-order blockers.
+`gru_l20_mse_ic_leaky_head_slope_0005` remains the canonical GRU score model. The promoted GRU mainline strategy is now the score model plus strict tradable mask overlay plus K20 keep=2x turnover buffer. The earlier ReLU, GELU, parent LeakyReLU, stable runs, clean alpha-only run, and clean alpha + residual style run are not active mainline strategies unless explicitly used for ablation or retrospective comparison.
 
 ## Run Command
 Mainline run:
 ```bash
 conda activate dl_env
 python scripts/train_sequence.py --config configs/sequence_gru_l20_mse_ic_frozen_head.yaml --device cuda
+```
+
+Rebuild and export promoted mainline strategy:
+```bash
+conda activate dl_env
+python scripts/build_strictmask_prediction_overlay.py
+python scripts/run_turnover_control_eval.py --run-dir outputs/runs/gru_l20_mse_ic_leaky_head_slope_0005_strictmask_overlay
+python scripts/export_gru_mainline_strategy.py
 ```
 
 Historical ReLU reference run:
@@ -265,9 +309,9 @@ python scripts/train_sequence.py --config configs/sequence_gru_baseline_stable.y
 ```
 
 ## Next Actions
-1. Treat `configs/sequence_gru_l20_mse_ic_frozen_head.yaml` as the canonical mainline GRU architecture for the next modeling stage.
-2. Do not use historical versions for new experiments unless explicitly doing retrospective comparison.
-3. Use `gru_l20_mse_ic_leaky_head_slope_0005` as the reference artifact for current frozen-head evidence.
-4. Move the next iteration to feature neutralization, toxic-sample filtering, tradability constraints, and turnover control.
-5. Keep K=30 as the safer portfolio-width diagnostic until narrow-head behavior is validated under lower turnover.
-6. Run GRU lookback=60 only after the feature/tradability audit produces a cleaner input universe.
+1. Treat `configs/gru_mainline_strategy.yaml` as the canonical GRU strategy configuration.
+2. Treat `configs/sequence_gru_l20_mse_ic_frozen_head.yaml` as the canonical GRU score-model training configuration.
+3. Use K20 keep=2x as the default reporting portfolio for GRU mainline comparisons.
+4. Keep K30 keep=2x and K30 keep=3x as turnover sensitivity checks only.
+5. Do not promote clean-v1 retraining variants unless they beat the promoted strategy after strict mask and turnover buffer.
+6. Run GRU lookback=60 only after the current mainline strategy is frozen for reporting.
