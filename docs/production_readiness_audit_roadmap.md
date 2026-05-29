@@ -416,7 +416,7 @@ Required disclaimer:
 - [ ] Build purged and embargoed walk-forward folds.
 - [ ] Generate style exposure reports.
 - [ ] Build initial portfolio optimizer.
-- [ ] Replace proxy backtest with execution-aware simulation.
+- [x] Replace proxy backtest with execution-aware simulation.
 - [ ] Downgrade long-short results to diagnostic status.
 - [ ] Re-evaluate only after the above controls are in place.
 
@@ -477,3 +477,174 @@ Open warnings:
 Interpretation:
 
 The first point-in-time audit did not find direct future-feature leakage in the audited construction path. However, it does not clear the strategy for production because current labels and backtests remain close-to-close proxy evaluations. The next required step is not more model tuning; it is to build execution-aware labels and then rerun backtests under next-open or next-VWAP assumptions with fillability constraints.
+
+## T+1 Fill Simulation Run 2026-05-29
+
+Execution label build command:
+
+```bash
+conda activate dl_env
+python scripts/build_execution_labels.py
+```
+
+Generated execution labels:
+
+```text
+data/mart/labels/execution_labels_v20260526.parquet
+data/mart/labels/execution_labels_v20260526_manifest.json
+```
+
+Execution label summary:
+
+| Field | Value |
+| --- | ---: |
+| Rows | 10,719,660 |
+| Trade dates | 2,521 |
+| Stocks | 5,761 |
+| Date range | 20160104..20260525 |
+| Buy executable rate | 0.9586 |
+| Sell executable rate | 0.9673 |
+| Execution return coverage | 0.9973 |
+
+Fill simulation command:
+
+```bash
+conda activate dl_env
+python scripts/backtest_t1_fill_sim.py \
+  --predictions outputs/runs/gru_l20_mse_ic_leaky_head_slope_0005/predictions.parquet \
+  --execution-labels data/mart/labels/execution_labels_v20260526.parquet \
+  --output-dir outputs/backtest/t1_fill_sim/gru_l20_slope0005_k20_keep2 \
+  --k 20 \
+  --keep-multiplier 2 \
+  --cost-bps 10 \
+  --slippage-bps 5 \
+  --portfolio-nav 10000000 \
+  --participation-cap 0.03 \
+  --rebalance-stride 5
+```
+
+Generated outputs:
+
+```text
+outputs/backtest/t1_fill_sim/gru_l20_slope0005_k20_keep2/t1_fill_metrics.json
+outputs/backtest/t1_fill_sim/gru_l20_slope0005_k20_keep2/t1_fill_periods.csv
+```
+
+Simulation assumptions:
+
+- T-day close signal.
+- T+1 open fill attempt.
+- 5-trading-day holding horizon.
+- Entry and exit return approximation: T+1 open to T+5 close.
+- Buy blocked when T+1 is not executable or locked limit-up.
+- Sell blocked when T+1 is not executable or locked limit-down.
+- Orders above 3% of next-day amount are partially filled.
+- Cost model: 10 bps explicit cost plus 5 bps filled-turnover slippage.
+- Portfolio NAV: 10,000,000.
+
+Mainline K20 keep=2x result:
+
+| Split | Net annualized | Excess vs benchmark ann. | Excess vs executable universe ann. | Max drawdown | Desired turnover | Filled turnover | Avg buy rejects | Avg sell rejects | Avg partial fills |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| validation | -0.2271 | -0.2141 | -0.1483 | -0.5699 | 1.1532 | 0.0648 | 0.0206 | 3.7835 | 34.7732 |
+| test | 0.4106 | -0.1109 | -0.0159 | -0.1924 | 1.1832 | 0.1434 | 0.0152 | 3.7121 | 32.1061 |
+
+Interpretation:
+
+The execution-aware result materially weakens the previous proxy conclusion. Test split still has positive absolute return, but it no longer shows positive excess versus the benchmark or the executable equal-weight universe. Validation remains deeply negative. The large gap between desired turnover and filled turnover also shows that the previous turnover-buffer result was not enough to model tradability: capacity and partial fills dominate actual implementation.
+
+Production implication:
+
+> The current mainline should not be described as a tradable strategy. Under first-pass T+1 fill simulation, its test-period absolute return is mostly market/regime participation, not robust executable stock-selection excess.
+
+Immediate next steps:
+
+1. Run capacity sensitivity at NAV 1m, 10m, 50m, and 100m.
+2. Run participation sensitivity at 1%, 3%, 5%, and 10%.
+3. Add next-VWAP execution mode and compare against T+1 open.
+4. Start style attribution on execution-aware returns rather than proxy close-to-close returns.
+
+## T+1 Fill K/Keep Matrix Run 2026-05-29
+
+Command:
+
+```bash
+conda activate dl_env
+python scripts/backtest_t1_fill_sim.py \
+  --predictions outputs/runs/gru_l20_mse_ic_leaky_head_slope_0005/predictions.parquet \
+  --execution-labels data/mart/labels/execution_labels_v20260526.parquet \
+  --output-dir outputs/backtest/t1_fill_sim/gru_l20_slope0005_k_keep_matrix_nav10m_part3pct \
+  --k "10,20,30" \
+  --keep-multiplier "1,1.5,2,3" \
+  --cost-bps 10 \
+  --slippage-bps 5 \
+  --portfolio-nav 10000000 \
+  --participation-cap 0.03 \
+  --rebalance-stride 5
+```
+
+Generated outputs:
+
+```text
+outputs/backtest/t1_fill_sim/gru_l20_slope0005_k_keep_matrix_nav10m_part3pct/t1_fill_metrics.json
+outputs/backtest/t1_fill_sim/gru_l20_slope0005_k_keep_matrix_nav10m_part3pct/t1_fill_periods.csv
+outputs/backtest/t1_fill_sim/gru_l20_slope0005_k_keep_matrix_nav10m_part3pct/t1_fill_matrix_summary.csv
+```
+
+Test split summary:
+
+| K | Keep | Net ann. | Excess vs benchmark ann. | Excess vs executable universe ann. | Max drawdown |
+| ---: | ---: | ---: | ---: | ---: | ---: |
+| 10 | 1.0x | 0.6898 | 0.0723 | 0.1813 | -0.1976 |
+| 10 | 1.5x | 0.7167 | 0.0901 | 0.2006 | -0.2009 |
+| 10 | 2.0x | 0.6150 | 0.0203 | 0.1253 | -0.1972 |
+| 10 | 3.0x | 0.5794 | -0.0005 | 0.1018 | -0.2009 |
+| 20 | 1.0x | 0.3119 | -0.1691 | -0.0841 | -0.1867 |
+| 20 | 1.5x | 0.3769 | -0.1310 | -0.0391 | -0.1887 |
+| 20 | 2.0x | 0.4106 | -0.1109 | -0.0159 | -0.1924 |
+| 20 | 3.0x | 0.3567 | -0.1497 | -0.0591 | -0.1755 |
+| 30 | 1.0x | 0.5420 | -0.0248 | 0.0784 | -0.1907 |
+| 30 | 1.5x | 0.4305 | -0.1005 | -0.0037 | -0.1885 |
+| 30 | 2.0x | 0.4754 | -0.0727 | 0.0264 | -0.1915 |
+| 30 | 3.0x | 0.6477 | 0.0393 | 0.1489 | -0.1987 |
+
+Validation split summary:
+
+| K | Keep | Net ann. | Excess vs benchmark ann. | Excess vs executable universe ann. | Max drawdown |
+| ---: | ---: | ---: | ---: | ---: | ---: |
+| 10 | 1.0x | -0.2509 | -0.2420 | -0.1794 | -0.5841 |
+| 10 | 1.5x | -0.2514 | -0.2422 | -0.1796 | -0.5847 |
+| 10 | 2.0x | -0.2569 | -0.2474 | -0.1851 | -0.5906 |
+| 10 | 3.0x | -0.2465 | -0.2358 | -0.1725 | -0.5810 |
+| 20 | 1.0x | -0.2362 | -0.2240 | -0.1594 | -0.5814 |
+| 20 | 1.5x | -0.2302 | -0.2184 | -0.1530 | -0.5733 |
+| 20 | 2.0x | -0.2271 | -0.2141 | -0.1483 | -0.5699 |
+| 20 | 3.0x | -0.2205 | -0.2092 | -0.1429 | -0.5650 |
+| 30 | 1.0x | -0.2037 | -0.1921 | -0.1241 | -0.5565 |
+| 30 | 1.5x | -0.1919 | -0.1822 | -0.1132 | -0.5463 |
+| 30 | 2.0x | -0.2133 | -0.2027 | -0.1351 | -0.5637 |
+| 30 | 3.0x | -0.1661 | -0.1578 | -0.0869 | -0.5009 |
+
+Matrix interpretation:
+
+- The originally promoted K20 keep=2x does not survive T+1 execution constraints as an excess-return strategy.
+- Test split has several positive-excess survivors, especially K10 keep=1.5x and K30 keep=3x.
+- Validation split is negative for every K/keep combination, including all positive test survivors.
+- K10 keep variants now look strongest on test, but this reverses the earlier proxy-backtest preference and increases suspicion of test-regime specificity.
+- K30 keep=3x again shows positive test excess, but validation remains negative and the result is path-dependent.
+
+Production implication:
+
+> The K/keep matrix does not rescue the strategy. It identifies candidate diagnostics for further attribution, but no setting qualifies as production-ready because all settings fail validation under T+1 fill simulation.
+
+Recommended next diagnostic candidates:
+
+| Candidate | Reason | Risk |
+| --- | --- | --- |
+| K10 keep=1.5x | Best test excess versus executable universe and benchmark. | Narrow head, likely regime/test-snooping risk. |
+| K30 keep=3x | Positive test excess with wider basket and lower churn. | Strong path dependence and negative validation. |
+| K30 keep=1x | Positive test excess versus executable universe. | Still negative vs benchmark and validation. |
+
+Next required step:
+
+Run capacity and participation sensitivity only on the three diagnostic candidates above. If they fail under smaller participation caps or larger NAV, stop strategy-promotion work and move to style attribution plus walk-forward validation.
