@@ -112,7 +112,7 @@ def validation_mode_id(
 
 def validation_output_dir(project_root: Path, data_version: str, feature_set: str | None, mode_id: str) -> Path:
     scope = feature_set or "all_lag1"
-    return project_root / "outputs" / "factor_validation" / data_version / scope / mode_id
+    return project_root / "outputs" / "factor_validation" / scope / mode_id
 
 
 def should_run_stage(requested_stage: str, stage: str) -> bool:

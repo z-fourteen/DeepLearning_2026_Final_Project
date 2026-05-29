@@ -1,4 +1,4 @@
-# Feature Engineering Progress - 2026-05-29
+﻿# Feature Engineering Progress - 2026-05-29
 
 ## Scope
 
@@ -19,7 +19,7 @@ conda run -n dl_env python scripts/run_factor_validation.py --data-version v2026
 Output directory:
 
 ```text
-outputs/factor_validation/v20260526/advanced_sequence_fixed/label_rel_return_q5_cs30_corr0p85_train_all_eval_all_quantile_off_ext_off_neutral_on/
+outputs/factor_validation/advanced_sequence_fixed/label_rel_return_q5_cs30_corr0p85_train_all_eval_all_quantile_off_ext_off_neutral_on/
 ```
 
 Important outputs:
@@ -89,7 +89,7 @@ Status: completed.
 Output:
 
 ```text
-outputs/factor_validation/v20260526/advanced_sequence_fixed/label_rel_return_q5_cs30_corr0p85_train_all_eval_all_quantile_off_ext_off_neutral_on/factor_neutralization_decay.csv
+outputs/factor_validation/advanced_sequence_fixed/label_rel_return_q5_cs30_corr0p85_train_all_eval_all_quantile_off_ext_off_neutral_on/factor_neutralization_decay.csv
 ```
 
 The table compares raw IC/RankIC with neutralized IC/RankIC and includes:
@@ -144,9 +144,171 @@ Still required:
   - excluded raw style exposures.
 - Decide whether direct exposure columns such as turnover, amount, size, and volatility should be excluded from GRU inputs or retained only as controls.
 
+### 2A. Feature Role Tags
+
+Status: completed for `advanced_sequence_fixed`.
+
+Role table outputs:
+
+```text
+outputs/factor_validation/advanced_sequence_fixed/label_rel_return_q5_cs30_corr0p85_train_all_eval_all_quantile_off_ext_off_neutral_on/feature_role_tags_advanced_sequence_fixed.csv
+outputs/factor_validation/advanced_sequence_fixed/label_rel_return_q5_cs30_corr0p85_train_all_eval_all_quantile_off_ext_off_neutral_on/feature_role_tags_advanced_sequence_fixed.csv
+```
+
+Role distribution:
+
+| Role | Count | Intended use |
+| --- | ---: | --- |
+| `alpha` | 16 | Candidate model input features after collinearity pruning. |
+| `risk_control` | 13 | Exposure controls, residualization inputs, diagnostics, or portfolio constraints. |
+| `tradability_control` | 23 | Executability, liquidity, limit-lock, and stock-pool filtering controls. |
+| `exclude` | 10 | Weak, unstable, redundant, or low-economic-justification features. |
+
+Alpha candidates:
+
+```text
+lag1_net_mf_strength_20d_mean
+lag1_net_mf_strength_60d_mean
+lag1_close_position
+lag1_excess_ret_10d_mean
+lag1_excess_ret_1d
+lag1_excess_ret_5d_mean
+lag1_industry_neutral_ret_1d
+lag1_ret_1d
+lag1_ret_20d
+lag1_ret_5d
+lag1_ret_5d_mean
+lag1_bollinger_z_20d
+lag1_ma_ratio_20_60
+lag1_macd_hist
+lag1_price_to_ma20
+lag1_rsi_14d
+```
+
+Risk controls:
+
+```text
+lag1_amplitude
+lag1_beta_20d
+lag1_beta_60d
+lag1_industry_pb_rank
+lag1_pb_winsor
+lag1_pe_ttm_winsor
+lag1_ps_ttm_winsor
+lag1_ret_20d_std
+lag1_ret_60d_std
+lag1_vol_log
+lag1_industry_mv_rank
+lag1_log_circ_mv
+lag1_log_total_mv
+```
+
+Tradability controls:
+
+```text
+lag1_amount_20d_mean
+lag1_amount_5d_mean
+lag1_amount_log
+lag1_amount_rank_pct
+lag1_gap_open
+lag1_industry_amount_rank
+lag1_industry_turnover_rank
+lag1_limit_position
+lag1_limit_touch_down
+lag1_limit_touch_up
+lag1_near_limit_down_2pct
+lag1_near_limit_up_2pct
+lag1_net_mf_amount_to_amount
+lag1_turnover_10d_mean
+lag1_turnover_10d_std
+lag1_turnover_20d_mean
+lag1_turnover_20d_std
+lag1_turnover_5d_mean
+lag1_turnover_60d_mean
+lag1_turnover_60d_std
+lag1_turnover_cost_proxy
+lag1_turnover_rate
+lag1_turnover_rate_f
+```
+
+Excluded:
+
+```text
+lag1_month
+lag1_weekday
+lag1_large_order_imbalance
+lag1_main_mf_strength
+lag1_net_mf_strength_10d_mean
+lag1_net_mf_strength_5d_mean
+lag1_excess_ret_20d_mean
+lag1_industry_neutral_ret_20d
+lag1_ma_ratio_5_20
+lag1_macd_diff
+```
+
+Interpretation:
+
+- The alpha list is intentionally narrow and still requires collinearity pruning.
+- Limit-touch and near-limit features remain strong residual signals, but are assigned to `tradability_control` because execution feasibility and limit-lock handling matter more than raw IC.
+- Turnover and amount features are mostly removed from alpha input status and retained as liquidity/tradability controls.
+- Size, beta, volatility, valuation, and amplitude features are treated as risk controls.
+
 ### 3. Collinearity Deletion / Merge
 
-Status: not completed in this branch.
+Status: completed for alpha candidates.
+
+Generated outputs:
+
+```text
+outputs/factor_validation/advanced_sequence_fixed/label_rel_return_q5_cs30_corr0p85_train_all_eval_all_quantile_off_ext_off_neutral_on/alpha_collinearity_pruning_proposal.csv
+outputs/factor_validation/advanced_sequence_fixed/label_rel_return_q5_cs30_corr0p85_train_all_eval_all_quantile_off_ext_off_neutral_on/alpha_features_after_collinearity_pruning.csv
+outputs/factor_validation/advanced_sequence_fixed/label_rel_return_q5_cs30_corr0p85_train_all_eval_all_quantile_off_ext_off_neutral_on/alpha_collinearity_pruning_proposal.csv
+```
+
+Pruning scope:
+
+- Only `alpha` features from `feature_role_tags_advanced_sequence_fixed.csv` were pruned.
+- `risk_control` and `tradability_control` features were intentionally excluded from alpha pruning because they will be used as controls, filters, residualization inputs, or portfolio constraints.
+- Spearman correlation threshold: 0.85.
+
+Result:
+
+| Action | Count |
+| --- | ---: |
+| `keep` | 13 |
+| `drop_collinear` | 3 |
+
+Dropped alpha features:
+
+| Dropped | Kept representative | Reason |
+| --- | --- | --- |
+| `lag1_ret_5d` | `lag1_ret_5d_mean` | Spearman corr 0.9897; kept feature has stronger residual score. |
+| `lag1_price_to_ma20` | `lag1_bollinger_z_20d` | Spearman corr 0.9420; both describe 20-day overextension. |
+| `lag1_rsi_14d` | `lag1_bollinger_z_20d` | Spearman corr 0.8626 with `bollinger_z_20d` and 0.8806 with `price_to_ma20`. |
+
+Kept alpha features after pruning:
+
+```text
+lag1_net_mf_strength_20d_mean
+lag1_net_mf_strength_60d_mean
+lag1_close_position
+lag1_excess_ret_10d_mean
+lag1_excess_ret_1d
+lag1_excess_ret_5d_mean
+lag1_industry_neutral_ret_1d
+lag1_ret_1d
+lag1_ret_20d
+lag1_ret_5d_mean
+lag1_bollinger_z_20d
+lag1_ma_ratio_20_60
+lag1_macd_hist
+```
+
+Interpretation:
+
+- The alpha candidate set shrank from 16 to 13.
+- The largest redundancy was in short-horizon return/reversal and technical overextension features.
+- This is now the preferred alpha-only candidate list for the next cleaned feature-set draft.
 
 Existing evidence indicates high redundancy among:
 
@@ -157,8 +319,7 @@ Existing evidence indicates high redundancy among:
 
 Next action:
 
-- Produce a feature-group pruning table for `advanced_sequence_fixed`.
-- Keep one representative alpha feature per highly correlated group, unless a member is explicitly reclassified as a risk/tradability control.
+- Combine the 13 pruned alpha features with residualized style families and external control masks.
 - Generate a new candidate feature set, likely `advanced_sequence_residual_v1`.
 
 ### 4. Tradability / Risk Controls
@@ -246,3 +407,4 @@ Raw style-heavy signals weaken after neutralization, but several residual effect
 ```
 
 The next milestone is not another model tuning pass. It is feature governance: residualized feature construction, collinearity pruning, role separation, and strict tradable-universe filtering.
+
