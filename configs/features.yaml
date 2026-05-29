@@ -253,6 +253,33 @@ validation:
     eval_start_date: "20260101"
   neutralization:
     enabled: true
-    exposures:
-      - lag1_log_circ_mv
-      - lag1_turnover_rate_f
+    industry:
+      enabled: true
+      column: industry
+    style_exposures:
+      - name: size
+        candidates:
+          - lag1_log_circ_mv
+          - lag1_log_total_mv
+          - lag1_industry_mv_rank
+      - name: liquidity
+        candidates:
+          - lag1_turnover_rate_f
+          - lag1_turnover_rate
+          - lag1_turnover_20d_mean
+          - lag1_turnover_60d_mean
+          - lag1_amount_log
+          - lag1_amount_rank_pct
+      - name: volatility
+        candidates:
+          - lag1_ret_20d_std
+          - lag1_ret_60d_std
+          - lag1_amplitude
+          - lag1_volume_ratio
+      - name: momentum
+        candidates:
+          - lag1_ret_20d_mean
+          - lag1_ret_60d_mean
+          - lag1_ret_20d
+          - lag1_ret_5d_mean
+          - lag1_ret_5d

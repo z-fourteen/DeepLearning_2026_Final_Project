@@ -27,6 +27,7 @@ class ValidationConfig:
     eval_start_date: str | None = None
     neutralized_jobs: int = 1
     neutralized_chunk_size: int = 16
+    neutralization: dict[str, Any] | None = None
 
 
 STAGES = {
@@ -197,7 +198,46 @@ def read_dataset(project_root: Path, config: dict[str, Any], data_version: str) 
     if "trade_date" not in df.columns or "ts_code" not in df.columns:
         raise ValueError("Mart dataset must contain trade_date and ts_code.")
     df["trade_date"] = df["trade_date"].astype("string")
+    df = add_industry_from_pool(project_root, config, df)
     return df.sort_values(["trade_date", "ts_code"]).reset_index(drop=True)
+
+
+def add_industry_from_pool(project_root: Path, config: dict[str, Any], df: pd.DataFrame) -> pd.DataFrame:
+    if "industry" in df.columns:
+        return df
+
+    pool_config = config.get("pool", {})
+    pool_output_dir = pool_config.get("output_dir")
+    pool_file = pool_config.get("scd2_file")
+    if not pool_output_dir or not pool_file:
+        return df
+
+    pool_path = project_root / pool_output_dir / pool_file
+    if not pool_path.exists():
+        return df
+
+    pool = pd.read_parquet(pool_path)
+    required = {"ts_code", "industry", "effective_from", "effective_to"}
+    if not required.issubset(pool.columns):
+        return df
+
+    result = df.copy()
+    result["_row_id"] = np.arange(len(result))
+    left = result[["_row_id", "trade_date", "ts_code"]].copy()
+    right = pool[["ts_code", "industry", "effective_from", "effective_to"]].copy()
+    left["trade_date"] = left["trade_date"].astype("string")
+    right["effective_from"] = right["effective_from"].astype("string")
+    right["effective_to"] = right["effective_to"].fillna("99991231").astype("string")
+
+    merged = left.merge(right, on="ts_code", how="left")
+    active = merged[
+        (merged["trade_date"] >= merged["effective_from"])
+        & (merged["trade_date"] <= merged["effective_to"])
+    ].copy()
+    active = active.sort_values(["_row_id", "effective_from"]).drop_duplicates("_row_id", keep="last")
+    result = result.merge(active[["_row_id", "industry"]], on="_row_id", how="left").drop(columns=["_row_id"])
+    result["industry"] = result["industry"].astype("string").fillna("UNKNOWN")
+    return result
 
 
 def read_registry(project_root: Path, config: dict[str, Any]) -> pd.DataFrame:
@@ -261,72 +301,201 @@ def feature_columns(df: pd.DataFrame) -> list[str]:
     return [column for column in df.columns if column.startswith("lag1_")]
 
 
-def add_neutralization_exposures(df: pd.DataFrame) -> pd.DataFrame:
+def default_neutralization_config() -> dict[str, Any]:
+    return {
+        "industry": {"enabled": True, "column": "industry"},
+        "style_exposures": [
+            {
+                "name": "size",
+                "candidates": ["lag1_log_circ_mv", "lag1_log_total_mv", "lag1_industry_mv_rank"],
+            },
+            {
+                "name": "liquidity",
+                "candidates": [
+                    "lag1_turnover_rate_f",
+                    "lag1_turnover_rate",
+                    "lag1_turnover_20d_mean",
+                    "lag1_turnover_60d_mean",
+                    "lag1_amount_log",
+                    "lag1_amount_rank_pct",
+                ],
+            },
+            {
+                "name": "volatility",
+                "candidates": ["lag1_ret_20d_std", "lag1_ret_60d_std", "lag1_amplitude", "lag1_volume_ratio"],
+            },
+            {
+                "name": "momentum",
+                "candidates": [
+                    "lag1_ret_20d_mean",
+                    "lag1_ret_60d_mean",
+                    "lag1_ret_20d",
+                    "lag1_ret_5d_mean",
+                    "lag1_ret_5d",
+                ],
+            },
+        ],
+    }
+
+
+def neutralization_config_from_features(project_root: Path) -> dict[str, Any]:
+    features_config_path = project_root / "configs" / "features.yaml"
+    if not features_config_path.exists():
+        return default_neutralization_config()
+    configured = load_yaml(features_config_path)
+    neutralization = configured.get("validation", {}).get("neutralization", {})
+    if not neutralization or not neutralization.get("enabled", True):
+        return default_neutralization_config()
+    merged = default_neutralization_config()
+    merged.update({key: value for key, value in neutralization.items() if key != "style_exposures"})
+    if neutralization.get("style_exposures"):
+        merged["style_exposures"] = neutralization["style_exposures"]
+    return merged
+
+
+def first_existing_column(df: pd.DataFrame, candidates: list[str]) -> str | None:
+    return next((column for column in candidates if column in df.columns), None)
+
+
+def exposure_source_columns(features: list[str], label_column: str, neutralization: dict[str, Any]) -> list[str]:
+    columns = ["trade_date", "ts_code", label_column]
+    industry_config = neutralization.get("industry", {})
+    industry_column = industry_config.get("column") if industry_config.get("enabled", True) else None
+    if industry_column:
+        columns.append(str(industry_column))
+    for exposure in neutralization.get("style_exposures", []):
+        columns.extend(str(column) for column in exposure.get("candidates", []))
+    columns.extend(features)
+    return list(dict.fromkeys(columns))
+
+
+def add_neutralization_exposures(df: pd.DataFrame, neutralization: dict[str, Any]) -> tuple[pd.DataFrame, list[str], list[str]]:
     result = df.copy()
-    result["exposure_size"] = pd.to_numeric(result.get("lag1_log_circ_mv"), errors="coerce")
-    turnover_candidates = ["lag1_turnover_rate_f", "lag1_turnover_rate", "lag1_turnover_5d_mean", "lag1_turnover_60d_mean"]
-    turnover = next((column for column in turnover_candidates if column in result.columns), None)
-    result["exposure_liquidity"] = pd.to_numeric(result[turnover], errors="coerce") if turnover else np.nan
-    return result
+    exposure_columns: list[str] = []
+    raw_exposure_columns: list[str] = []
+
+    industry_config = neutralization.get("industry", {})
+    industry_column = industry_config.get("column") if industry_config.get("enabled", True) else None
+    if industry_column and industry_column in result.columns:
+        result["exposure_industry"] = result[industry_column].astype("string").fillna("UNKNOWN")
+        exposure_columns.append("exposure_industry")
+
+    for exposure in neutralization.get("style_exposures", []):
+        name = str(exposure["name"])
+        candidates = [str(column) for column in exposure.get("candidates", [])]
+        source_column = first_existing_column(result, candidates)
+        exposure_column = f"exposure_{name}"
+        if source_column:
+            result[exposure_column] = pd.to_numeric(result[source_column], errors="coerce")
+            exposure_columns.append(exposure_column)
+            raw_exposure_columns.append(source_column)
+        else:
+            result[exposure_column] = np.nan
+
+    return result, exposure_columns, raw_exposure_columns
 
 
-def compute_neutralized_residuals(source: pd.DataFrame, features: list[str]) -> pd.DataFrame:
+def cross_sectional_design_matrix(group: pd.DataFrame, exposure_columns: list[str]) -> pd.DataFrame:
+    continuous_columns = [column for column in exposure_columns if column != "exposure_industry"]
+    design_parts: list[pd.DataFrame] = []
+    if continuous_columns:
+        continuous = group[continuous_columns].apply(pd.to_numeric, errors="coerce").replace([np.inf, -np.inf], np.nan)
+        continuous = continuous.apply(lambda column: (column - column.mean()) / column.std(ddof=0) if column.std(ddof=0) else column * 0)
+        design_parts.append(continuous)
+    if "exposure_industry" in exposure_columns:
+        industry = group["exposure_industry"].astype("string").fillna("UNKNOWN")
+        dummies = pd.get_dummies(industry, prefix="industry", dtype="float64")
+        if dummies.shape[1] > 1:
+            design_parts.append(dummies.iloc[:, 1:])
+    if not design_parts:
+        return pd.DataFrame(index=group.index)
+    return pd.concat(design_parts, axis=1)
+
+
+def compute_neutralized_residuals(source: pd.DataFrame, features: list[str], exposure_columns: list[str]) -> pd.DataFrame:
     residual_columns = [f"{feature}__neutral" for feature in features]
     residuals = pd.DataFrame(np.nan, index=source.index, columns=residual_columns, dtype="float64")
 
-    if not features:
+    if not features or not exposure_columns:
         return residuals
 
-    exposure_columns = ["exposure_size", "exposure_liquidity"]
     for _, group in source.groupby("trade_date", sort=True):
-        exposures = group[exposure_columns].apply(pd.to_numeric, errors="coerce").replace([np.inf, -np.inf], np.nan)
-        exposure_valid = exposures.notna().all(axis=1)
-        if int(exposure_valid.sum()) <= len(exposure_columns) + 2:
+        exposures = cross_sectional_design_matrix(group, exposure_columns)
+        if exposures.empty:
             continue
-        for feature, residual_feature in zip(features, residual_columns, strict=True):
-            y = pd.to_numeric(group[feature], errors="coerce").replace([np.inf, -np.inf], np.nan)
-            valid = exposure_valid & y.notna()
-            if int(valid.sum()) <= len(exposure_columns) + 2 or y[valid].nunique() < 2:
+        exposure_valid = exposures.notna().all(axis=1)
+        valid_exposures = exposures.loc[exposure_valid]
+        valid_exposures = valid_exposures.loc[:, valid_exposures.nunique(dropna=True) > 1]
+        if valid_exposures.empty:
+            continue
+
+        y_frame = group.loc[exposure_valid, features].apply(pd.to_numeric, errors="coerce").replace([np.inf, -np.inf], np.nan)
+        y_valid = y_frame.notna()
+        complete_features = [feature for feature in features if bool(y_valid[feature].all()) and y_frame[feature].nunique() >= 2]
+        if not complete_features or len(valid_exposures) <= valid_exposures.shape[1] + 2:
+            continue
+
+        x_values = valid_exposures.to_numpy(dtype="float64")
+        x_values = np.column_stack([np.ones(len(x_values)), x_values])
+        y_values = y_frame[complete_features].to_numpy(dtype="float64")
+        try:
+            beta = np.linalg.lstsq(x_values, y_values, rcond=None)[0]
+        except np.linalg.LinAlgError:
+            continue
+        neutral_values = y_values - x_values @ beta
+        neutral_columns = [f"{feature}__neutral" for feature in complete_features]
+        residuals.loc[y_frame.index, neutral_columns] = neutral_values
+
+        incomplete_features = [feature for feature in features if feature not in complete_features]
+        for feature in incomplete_features:
+            y = y_frame[feature]
+            valid = y.notna()
+            valid_x = valid_exposures.loc[valid]
+            valid_x = valid_x.loc[:, valid_x.nunique(dropna=True) > 1]
+            if int(valid.sum()) <= valid_x.shape[1] + 2 or y[valid].nunique() < 2:
                 continue
-            x_values = exposures.loc[valid, exposure_columns].to_numpy(dtype="float64")
+            x_values = valid_x.to_numpy(dtype="float64")
             x_values = np.column_stack([np.ones(len(x_values)), x_values])
             y_values = y.loc[valid].to_numpy(dtype="float64")
             try:
                 beta = np.linalg.lstsq(x_values, y_values, rcond=None)[0]
             except np.linalg.LinAlgError:
                 continue
-            residuals.loc[y.loc[valid].index, residual_feature] = y_values - x_values @ beta
+            residuals.loc[y.loc[valid].index, f"{feature}__neutral"] = y_values - x_values @ beta
 
     return residuals
 
 
-def neutralized_chunk_worker(args: tuple[pd.DataFrame, list[str]]) -> pd.DataFrame:
-    source, features = args
-    return compute_neutralized_residuals(source, features)
+def neutralized_chunk_worker(args: tuple[pd.DataFrame, list[str], list[str]]) -> pd.DataFrame:
+    source, features, exposure_columns = args
+    return compute_neutralized_residuals(source, features, exposure_columns)
 
 
 def build_neutralized_dataset(
     df: pd.DataFrame,
     features: list[str],
     label_column: str,
+    neutralization: dict[str, Any],
     neutralized_jobs: int = 1,
     neutralized_chunk_size: int = 16,
 ) -> pd.DataFrame:
-    source = add_neutralization_exposures(df[["trade_date", "ts_code", label_column, *features]].copy())
-    skip_features = {"lag1_log_circ_mv", "lag1_turnover_rate", "lag1_turnover_rate_f"}
+    columns = [column for column in exposure_source_columns(features, label_column, neutralization) if column in df.columns]
+    source, exposure_columns, raw_exposure_columns = add_neutralization_exposures(df[columns].copy(), neutralization)
+    skip_features = set(raw_exposure_columns)
     neutral_features = [feature for feature in features if feature not in skip_features]
-    if not neutral_features:
+    if not neutral_features or not exposure_columns:
         return source[["trade_date", "ts_code", label_column]]
 
     jobs = max(1, int(neutralized_jobs))
     chunk_size = max(1, int(neutralized_chunk_size))
     feature_chunks = chunked(neutral_features, chunk_size)
     if jobs == 1 or len(feature_chunks) == 1:
-        residuals = compute_neutralized_residuals(source, neutral_features)
+        residuals = compute_neutralized_residuals(source, neutral_features, exposure_columns)
     else:
         worker_count = min(jobs, len(feature_chunks), os.cpu_count() or 1)
-        common_columns = ["trade_date", "exposure_size", "exposure_liquidity"]
+        common_columns = ["trade_date", *exposure_columns]
         tasks = [(source[common_columns + chunk].copy(), chunk) for chunk in feature_chunks]
+        tasks = [(task_source, task_features, exposure_columns) for task_source, task_features in tasks]
         with ProcessPoolExecutor(max_workers=worker_count) as executor:
             residual_frames = list(executor.map(neutralized_chunk_worker, tasks))
         residuals = pd.concat(residual_frames, axis=1)
@@ -810,6 +979,7 @@ def run_factor_validation(
     labels_config_path = project_root / "configs" / "labels.yaml"
     labels_config = load_yaml(labels_config_path) if labels_config_path.exists() else {}
     benchmark = labels_config.get("benchmark", "399006.SZ")
+    neutralization = neutralization_config_from_features(project_root)
     validation_config = ValidationConfig(
         data_version=data_version,
         label_column=label_column,
@@ -820,6 +990,7 @@ def run_factor_validation(
         eval_start_date=eval_start_date,
         neutralized_jobs=neutralized_jobs,
         neutralized_chunk_size=neutralized_chunk_size,
+        neutralization=neutralization,
     )
     df = read_dataset(project_root, config, validation_config.data_version)
     if validation_config.label_column not in df.columns:
@@ -1022,6 +1193,7 @@ def run_factor_validation(
                 df,
                 features,
                 validation_config.label_column,
+                validation_config.neutralization or default_neutralization_config(),
                 neutralized_jobs=validation_config.neutralized_jobs,
                 neutralized_chunk_size=validation_config.neutralized_chunk_size,
             )
@@ -1142,6 +1314,7 @@ def run_factor_validation(
         "max_baseline_corr": validation_config.max_baseline_corr,
         "regime_definition": "historical_benchmark_ret20_vol20_amount60",
         "neutralized_ic_skipped": skip_neutralized,
+        "neutralization": validation_config.neutralization,
         "quantile_skipped": skip_quantile,
         "extended_quantile_skipped": skip_extended_quantile,
         "stage": stage,
@@ -1170,7 +1343,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--quantiles", type=int, default=5)
     parser.add_argument("--min-cross-section", type=int, default=30)
     parser.add_argument("--max-baseline-corr", type=float, default=0.85)
-    parser.add_argument("--feature-set", choices=["baseline_lightgbm", "advanced_sequence"])
+    parser.add_argument("--feature-set")
     parser.add_argument("--train-end-date")
     parser.add_argument("--eval-start-date")
     parser.add_argument("--skip-neutralized", action="store_true")
