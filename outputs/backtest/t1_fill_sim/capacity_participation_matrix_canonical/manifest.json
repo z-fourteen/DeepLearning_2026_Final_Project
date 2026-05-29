@@ -1,0 +1,31 @@
+{
+  "predictions": "outputs/runs/gru_l20_mse_ic_leaky_head_slope_0005/predictions.parquet",
+  "labels": "data\\mart\\labels\\labels_canonical_v20260526.parquet",
+  "output_dir": "outputs\\backtest\\t1_fill_sim\\capacity_participation_matrix_canonical",
+  "k": [
+    10,
+    30
+  ],
+  "keep_multiplier": [
+    1.0,
+    1.5,
+    3.0
+  ],
+  "portfolio_nav": [
+    1000000.0,
+    10000000.0,
+    50000000.0,
+    100000000.0
+  ],
+  "participation_cap": [
+    0.01,
+    0.03,
+    0.05,
+    0.1
+  ],
+  "cost_bps": 10.0,
+  "slippage_bps": 5.0,
+  "rebalance_stride": 5,
+  "period_rows": 15648,
+  "summary_rows": 192
+}

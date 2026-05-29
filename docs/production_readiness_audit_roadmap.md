@@ -116,14 +116,24 @@ Blocking gaps before any live-strategy claim:
 
 ### P0: Stop Optimizing Test Performance
 
-Freeze the current test result as a historical research observation. Future choices should not be made from 2025-2026 test performance.
+Freeze the current test result as a historical research observation. Future choices must not be made from 2025-2026 test performance.
+
+From this point forward, the 2025-2026 period is a sealed test-set lockbox. It has already been inspected too often to support further model, feature, K, keep-multiplier, capacity, participation, execution-mode, or reporting-language decisions. Treat all existing 2025-2026 results as contaminated research history, not as an active selection signal.
 
 Immediate actions:
 
 - Treat `outputs/runs/gru_l20_mse_ic_leaky_head_slope_0005/` as the frozen score baseline.
 - Treat `outputs/runs/gru_l20_mse_ic_leaky_head_slope_0005_strictmask_overlay/` as the frozen proxy strategy baseline.
 - Do not promote additional K or keep-multiplier settings based on test results.
-- Use the current test window only once more after the next validation framework is rebuilt.
+- Do not promote capacity, participation, execution, risk-control, or portfolio settings based on 2025-2026 results.
+- Base all future choices only on pre-declared purged and embargoed walk-forward validation.
+- Open the 2025-2026 lockbox exactly once after the full model-selection protocol is frozen.
+- Record the lockbox opening date, code commit, config files, random seeds, selected candidate, and acceptance thresholds before running the final evaluation.
+- If any choice changes after opening the lockbox, the lockbox result becomes invalid for final proof and must be reported only as exploratory.
+
+Lockbox rule:
+
+> 2025-2026 is no longer a tuning, selection, or promotion input. It is a sealed final holdout. The only admissible path is: pre-register the walk-forward selection protocol, select the candidate using walk-forward validation only, freeze code and configs, then open the 2025-2026 lockbox once for final reporting.
 
 ### P1: Point-In-Time Audit
 
@@ -161,9 +171,9 @@ Acceptance criteria:
 
 ### P2: Purged And Embargoed Walk-Forward Validation
 
-Replace the single train/validation/test interpretation with walk-forward validation.
+Replace the single train/validation/test interpretation with purged and embargoed walk-forward validation. The current single split is too fragile to support a production-readiness claim.
 
-Proposed folds:
+Proposed model-selection folds:
 
 | Fold | Train | Validation | Test |
 | --- | --- | --- | --- |
@@ -171,38 +181,55 @@ Proposed folds:
 | F2 | 2016-2020 | 2021 | 2022 |
 | F3 | 2016-2021 | 2022 | 2023 |
 | F4 | 2016-2022 | 2023 | 2024 |
-| F5 | 2016-2023 | 2024 | 2025 |
-| F6 | 2016-2024 | 2025 | 2026 |
 
-Use an embargo window at every split boundary. For 5-day labels, start with at least 20 trading days of embargo.
+Reserved final lockbox:
+
+| Period | Role | Rule |
+| --- | --- | --- |
+| 2025-2026 | Final holdout | Open exactly once after the walk-forward protocol, candidate, code, configs, seeds, and acceptance thresholds are frozen. |
+
+Use an embargo window at every validation/test boundary. If the label is a future 5-trading-day return, isolate at least 5 to 20 trading days around each boundary so adjacent samples cannot share overlapping future-return information. Start with `--embargo-days 20` as the conservative default, then report sensitivity to shorter embargo windows only as diagnostics.
+
+Environment:
+
+```bash
+conda activate dl_env
+```
 
 Implementation tasks:
 
-- Add fold definitions to dataset builder.
-- Export fold-specific sequence NPZ files.
+- Add `split_scheme: walk_forward` support to the dataset builder.
+- Add fixed fold definitions for F1-F4 using the table above.
+- Exclude 2025-2026 from all model-selection, parameter-selection, and diagnostic-ranking outputs.
+- Purge overlapping label windows before applying the embargo.
+- Export fold-specific sequence NPZ files so each fold has independent train, validation, and test arrays.
 - Add `--fold` support to `scripts/train_sequence.py`.
-- Add a fold summary script.
+- Add a fold summary script that computes fold mean, t-stat, positive-fold ratio, worst fold, and fold-level portfolio excess.
+- Store all fold manifests with exact date ranges, embargo days, row counts, stock counts, and dropped-sample counts.
 
 Suggested commands:
 
 ```bash
+conda activate dl_env
 python scripts/build_model_datasets.py --split-scheme walk_forward --embargo-days 20
 python scripts/train_sequence.py --config configs/sequence_gru_l20_mse_ic_frozen_head.yaml --device cuda --fold F1
 python scripts/train_sequence.py --config configs/sequence_gru_l20_mse_ic_frozen_head.yaml --device cuda --fold F2
 python scripts/train_sequence.py --config configs/sequence_gru_l20_mse_ic_frozen_head.yaml --device cuda --fold F3
 python scripts/train_sequence.py --config configs/sequence_gru_l20_mse_ic_frozen_head.yaml --device cuda --fold F4
-python scripts/train_sequence.py --config configs/sequence_gru_l20_mse_ic_frozen_head.yaml --device cuda --fold F5
-python scripts/train_sequence.py --config configs/sequence_gru_l20_mse_ic_frozen_head.yaml --device cuda --fold F6
 python scripts/summarize_walk_forward.py
 ```
 
 Acceptance criteria:
 
+- Do not select or promote the best fold. The evaluation unit is the full walk-forward panel.
 - Mean RankIC across folds is positive.
 - At least 70% of folds have positive RankIC.
+- RankIC fold-level t-stat is reported.
+- Worst fold is not disastrous under the pre-declared drawdown and excess-return thresholds.
 - Portfolio excess is positive in a majority of folds.
-- Worst-fold drawdown is acceptable.
-- Results do not rely only on 2025-2026.
+- Results do not use 2025-2026 until the final lockbox opening.
+- Fold-level results include both validation and test behavior; model and portfolio choices cannot be made from later test folds.
+- The final selected candidate is declared from the full F1-F4 walk-forward panel before the 2025-2026 lockbox is opened.
 
 ### P3: Formal Style Exposure Report
 
@@ -637,7 +664,7 @@ Production implication:
 
 > The K/keep matrix does not rescue the strategy. It identifies candidate diagnostics for further attribution, but no setting qualifies as production-ready because all settings fail validation under T+1 fill simulation.
 
-Recommended next diagnostic candidates:
+Historical diagnostic candidates, now frozen:
 
 | Candidate | Reason | Risk |
 | --- | --- | --- |
@@ -647,7 +674,7 @@ Recommended next diagnostic candidates:
 
 Next required step:
 
-Run capacity and participation sensitivity only on the three diagnostic candidates above. If they fail under smaller participation caps or larger NAV, stop strategy-promotion work and move to style attribution plus walk-forward validation.
+Do not run further selection work from these test-positive candidates. They may remain in the document as historical diagnostics, but future candidate choice must come only from the pre-declared walk-forward validation panel. Capacity and participation sensitivity should be run only after a candidate is selected by walk-forward validation, with the grid also pre-declared before any 2025-2026 lockbox opening.
 
 ## Full62 Attribution Audit Run 2026-05-29
 
@@ -745,13 +772,168 @@ What remains dangerous:
 - The full62 alpha is style-regime dependent: large/liquid/low-turnover exposure is not consistently rewarded.
 - Execution constraints materially reshape the portfolio because most desired turnover is not filled under the 3% participation cap.
 - Validation remains negative for every diagnostic candidate even after moving strict tradability constraints into T+1 execution.
-- The test-positive candidates are therefore diagnostics, not deployable strategies.
+- The test-positive candidates are frozen historical diagnostics, not deployable strategies and not eligible as future selection inputs.
 
 Required next experiments:
 
 | Priority | Experiment | Stop condition |
 | ---: | --- | --- |
-| 1 | Capacity and participation sensitivity on K10 keep=1.5x, K30 keep=3x, K30 keep=1x. NAV: 1m, 10m, 50m, 100m. Participation: 1%, 3%, 5%, 10%. | Stop promotion if excess survives only at unrealistic capacity or participation. |
-| 2 | Barra-lite residual alpha regression on selected returns and score deciles. Controls: Size, Momentum, Beta, Volatility, Liquidity, Industry. | Stop promotion if residual alpha is statistically weak or flips sign by split. |
+| 1 | Walk-forward purged validation with fixed model-selection protocol using only pre-2025 folds. | Stop promotion if winners rotate by fold or require test-period selection. |
+| 2 | Barra-lite residual alpha regression on selected returns and score deciles. Controls: Size, Momentum, Beta, Volatility, Liquidity, Industry. | Stop promotion if residual alpha is statistically weak or flips sign by fold. |
 | 3 | Post-fill holdings attribution instead of target-selection attribution. | Stop promotion if realized holdings are dominated by fill artifacts rather than model rank. |
-| 4 | Walk-forward purged validation with fixed model-selection protocol. | Stop promotion if winners rotate by fold or require test-period selection. |
+| 4 | Capacity and participation sensitivity on the walk-forward-selected candidate. NAV and participation grid must be declared before the final lockbox opening. | Stop promotion if excess survives only at unrealistic capacity or participation. |
+
+## Canonical Labels And Capacity Matrix Run 2026-05-29
+
+### Canonical Label Table
+
+Command:
+
+```bash
+conda activate dl_env
+python scripts/build_canonical_labels.py
+```
+
+Generated outputs:
+
+```text
+data/mart/labels/labels_canonical_v20260526.parquet
+data/mart/labels/labels_canonical_v20260526_manifest.json
+```
+
+Manifest summary:
+
+| Metric | Value |
+| --- | ---: |
+| Rows | 242,938 |
+| Trade dates | 2,521 |
+| Stocks | 259 |
+| Date range | 20160104..20260525 |
+| Duplicate keys | 0 |
+| Buy executable rate | 0.994694 |
+| Sell executable rate | 0.996316 |
+| Next-open return coverage | 0.997942 |
+| Next-VWAP return coverage | 0.997942 |
+
+Canonical fields added on top of close-to-close research labels:
+
+```text
+label_rel_return_close_to_close5
+next_open_return_5d
+next_vwap_return_5d
+execution_excess_open_to_close5
+benchmark_next_open_return_5d
+buy_executable
+sell_executable
+next_open
+next_vwap
+next_amount
+next_vol
+next_is_limit_up
+next_is_limit_down
+```
+
+Interpretation:
+
+The execution-label warning is now addressed at schema level. The canonical label table is aligned to the original research universe, so it has 242,938 rows rather than the full-market execution-label table's 10.7 million rows.
+
+### Canonical PIT Audit
+
+Command:
+
+```bash
+conda activate dl_env
+python scripts/audit_point_in_time.py \
+  --labels data/mart/labels/labels_canonical_v20260526.parquet \
+  --out-dir outputs/audit/point_in_time_canonical_labels
+```
+
+Generated outputs:
+
+```text
+outputs/audit/point_in_time_canonical_labels/field_audit.csv
+outputs/audit/point_in_time_canonical_labels/feature_column_audit.csv
+outputs/audit/point_in_time_canonical_labels/negative_shift_audit.csv
+outputs/audit/point_in_time_canonical_labels/suspect_features.txt
+outputs/audit/point_in_time_canonical_labels/leakage_findings.md
+```
+
+Audit result:
+
+| Metric | Before | After canonical labels |
+| --- | ---: | ---: |
+| Blockers | 0 | 0 |
+| Warnings | 4 | 1 |
+| Pass checks | 9 | 10 |
+
+Resolved or downgraded findings:
+
+| Finding | New status | Reason |
+| --- | --- | --- |
+| `LBL003` execution labels missing | PASS | Canonical table contains next-open/VWAP returns, executable flags, and fillability fields. |
+| `MSK002` same-day strict mask | INFO | Strict mask is documented as a conservative sample filter; T+1 executable flags now drive production-like backtests. |
+| `CODE002` close-to-close label | INFO | Close-to-close labels remain acceptable as supervised targets when execution-aware labels drive evaluation. |
+
+Remaining warning:
+
+| Finding | Status | Interpretation |
+| --- | --- | --- |
+| `DATA003` style/microstructure-sensitive features | WARNING | This cannot be solved by label schema. It requires style attribution, residual alpha regression, and portfolio-level risk control. |
+
+### Capacity And Participation Matrix
+
+Command:
+
+```bash
+conda activate dl_env
+python scripts/run_capacity_participation_matrix.py \
+  --labels data/mart/labels/labels_canonical_v20260526.parquet \
+  --output-dir outputs/backtest/t1_fill_sim/capacity_participation_matrix_canonical \
+  --k "10,30" \
+  --keep-multiplier "1,1.5,3" \
+  --portfolio-nav "1000000,10000000,50000000,100000000" \
+  --participation-cap "0.01,0.03,0.05,0.10" \
+  --cost-bps 10 \
+  --slippage-bps 5 \
+  --rebalance-stride 5
+```
+
+Generated outputs:
+
+```text
+outputs/backtest/t1_fill_sim/capacity_participation_matrix_canonical/capacity_participation_periods.csv
+outputs/backtest/t1_fill_sim/capacity_participation_matrix_canonical/capacity_participation_summary.csv
+outputs/backtest/t1_fill_sim/capacity_participation_matrix_canonical/manifest.json
+```
+
+Matrix size:
+
+| Metric | Value |
+| --- | ---: |
+| Period rows | 15,648 |
+| Summary rows | 192 |
+| NAV grid | 1m, 10m, 50m, 100m |
+| Participation grid | 1%, 3%, 5%, 10% |
+| K grid | 10, 30 |
+| Keep grid | 1.0x, 1.5x, 3.0x |
+
+Key capacity results for diagnostic candidates:
+
+| Candidate | Split | Case | NAV | Participation | Net ann. | Excess vs benchmark ann. | Excess vs exec universe ann. | Max drawdown | Avg filled turnover |
+| --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| K10 keep=1.5x | test | Best exec excess | 1m | 5% | 0.8994 | 0.1980 | 0.3211 | -0.2041 | 0.6925 |
+| K10 keep=1.5x | test | Worst exec excess | 100m | 1% | 0.6028 | 0.0170 | 0.1193 | -0.1996 | 0.0055 |
+| K10 keep=1.5x | validation | Best exec excess | 1m | 10% | -0.1025 | -0.0940 | -0.0189 | -0.4875 | 0.6729 |
+| K30 keep=3x | validation | Best exec excess | 50m | 1% | -0.1312 | -0.1214 | -0.0504 | -0.5207 | 0.0043 |
+| K30 keep=1x | validation | Best exec excess | 100m | 1% | -0.1349 | -0.1277 | -0.0574 | -0.5248 | 0.0041 |
+
+Capacity interpretation:
+
+- K10 keep=1.5x remains test-positive across the matrix, but the validation split is negative even in its best capacity/participation setting.
+- K30 keep=3x has lower turnover and wider basket, but validation still fails with large drawdown.
+- K30 keep=1x does not justify promotion: validation remains negative and test performance is weaker than K10 keep=1.5x.
+- Very low filled turnover at high NAV/low participation shows that capacity constraints can turn the strategy into a stale-holding portfolio. Positive test returns under this condition should not be interpreted as clean alpha.
+
+PM decision after this run:
+
+> Canonical label schema and PIT audit quality improved materially, but the strategy remains a research prototype. Capacity sensitivity does not rescue validation. Further model tuning is not the next bottleneck; residual style alpha and walk-forward robustness are.

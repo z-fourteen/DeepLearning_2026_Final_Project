@@ -1,0 +1,15 @@
+{
+  "output": "data\\mart\\labels\\labels_canonical_v20260526.parquet",
+  "base_labels": "data/mart/labels/labels_v20260526.parquet",
+  "execution_labels": "data/mart/labels/execution_labels_v20260526.parquet",
+  "rows": 242938,
+  "trade_dates": 2521,
+  "stocks": 259,
+  "date_min": "20160104",
+  "date_max": "20260525",
+  "duplicate_keys": 0,
+  "buy_executable_rate": 0.9946941194872766,
+  "sell_executable_rate": 0.9963159324601338,
+  "next_open_return_coverage": 0.997941861709572,
+  "next_vwap_return_coverage": 0.997941861709572
+}

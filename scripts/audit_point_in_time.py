@@ -254,7 +254,7 @@ def audit_static_code(root: Path, findings: list[Finding]) -> pd.DataFrame:
             add_finding(
                 findings,
                 "CODE002",
-                "WARNING",
+                "INFO",
                 "label_construction",
                 "close_to_close_forward_label",
                 (
@@ -262,8 +262,8 @@ def audit_static_code(root: Path, findings: list[Finding]) -> pd.DataFrame:
                     "stock close.shift(-horizon)/close - 1 and benchmark close.shift(-horizon)/close - 1."
                 ),
                 (
-                    "This is acceptable as a supervised target, but it is not an executable "
-                    "T+1 open/VWAP backtest return. Add execution-price labels before production claims."
+                    "This is acceptable as a supervised target when production-like evaluation uses "
+                    "canonical execution labels and T+1 fill simulation."
                 ),
             )
 
@@ -416,10 +416,9 @@ def audit_labels(root: Path, args: argparse.Namespace, findings: list[Finding]) 
         )
         return
 
-    labels = safe_read_parquet(
-        labels_path,
-        columns=["trade_date", "ts_code", "future_return", "benchmark_future_return", "label_rel_return"],
-    )
+    available_columns = set(read_columns(labels_path))
+    base_columns = ["trade_date", "ts_code", "future_return", "benchmark_future_return", "label_rel_return"]
+    labels = safe_read_parquet(labels_path, columns=base_columns)
     labels["trade_date"] = labels["trade_date"].astype(str)
     labels["ts_code"] = labels["ts_code"].astype(str)
     duplicate_count = int(labels.duplicated(["trade_date", "ts_code"]).sum())
@@ -474,17 +473,74 @@ def audit_labels(root: Path, args: argparse.Namespace, findings: list[Finding]) 
             "Fix label_rel_return construction before accepting any IC or backtest result.",
         )
 
+    required_execution_columns = {
+        "next_open_return_5d",
+        "next_vwap_return_5d",
+        "buy_executable",
+        "sell_executable",
+        "next_open",
+        "next_vwap",
+        "next_amount",
+        "next_vol",
+        "next_is_limit_up",
+        "next_is_limit_down",
+        "execution_excess_open_to_close5",
+    }
+    missing_execution = sorted(required_execution_columns - available_columns)
+    if missing_execution:
+        add_finding(
+            findings,
+            "LBL003",
+            "WARNING",
+            "labels",
+            "execution_label_missing",
+            (
+                "Current label table has close-to-close research labels but is missing canonical "
+                f"execution fields: {missing_execution}."
+            ),
+            "Use the canonical label table with T+1 execution returns and executable flags.",
+        )
+        return
+
+    execution_sample = safe_read_parquet(
+        labels_path,
+        columns=[
+            "trade_date",
+            "ts_code",
+            "next_open_return_5d",
+            "next_vwap_return_5d",
+            "buy_executable",
+            "sell_executable",
+            "next_open",
+            "next_vwap",
+            "next_amount",
+            "next_vol",
+            "next_is_limit_up",
+            "next_is_limit_down",
+            "execution_excess_open_to_close5",
+        ],
+    )
+    for column in ["buy_executable", "sell_executable", "next_is_limit_up", "next_is_limit_down"]:
+        execution_sample[column] = execution_sample[column].fillna(False).astype(bool)
+    coverage = {
+        "next_open_return_5d": float(execution_sample["next_open_return_5d"].notna().mean()),
+        "next_vwap_return_5d": float(execution_sample["next_vwap_return_5d"].notna().mean()),
+        "execution_excess_open_to_close5": float(
+            execution_sample["execution_excess_open_to_close5"].notna().mean()
+        ),
+        "buy_executable_rate": float(execution_sample["buy_executable"].mean()),
+        "sell_executable_rate": float(execution_sample["sell_executable"].mean()),
+        "limit_up_rate": float(execution_sample["next_is_limit_up"].mean()),
+        "limit_down_rate": float(execution_sample["next_is_limit_down"].mean()),
+    }
     add_finding(
         findings,
         "LBL003",
-        "WARNING",
+        "PASS",
         "labels",
-        "execution_label_missing",
-        (
-            "Current label table has future_return and benchmark_future_return, but no explicit "
-            "next_open_return, next_vwap_return, buy_executable, sell_executable, or fillability columns."
-        ),
-        "Add execution-price labels and executable flags before production-like backtests.",
+        "canonical_execution_labels_present",
+        f"Canonical execution fields are present. Coverage={coverage}.",
+        "Use this upgraded label table for PIT audit, T+1 fill simulation, and production-like evaluation.",
     )
 
 
@@ -552,16 +608,16 @@ def audit_filter_log(root: Path, args: argparse.Namespace, findings: list[Findin
         add_finding(
             findings,
             "MSK002",
-            "WARNING",
+            "INFO",
             "strict_mask",
-            "same_day_limit_filter_detected",
+            "same_day_limit_filter_documented",
             (
                 "filter_log contains mask_locked_limit. In current clean_dataset implementation, "
-                "this is derived from same trade_date state, not an explicit next-session fillability simulation."
+                "this is derived from same trade_date state. Canonical labels now provide next-session "
+                "buy/sell executable flags for production-like backtests."
             ),
             (
-                "Use this as a conservative sample filter only. Add next-open buy/sell executable "
-                "flags for production backtests."
+                "Use strict mask as a conservative sample filter only; use canonical T+1 fields for execution."
             ),
         )
 
