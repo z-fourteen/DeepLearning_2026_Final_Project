@@ -1,0 +1,101 @@
+[
+  {
+    "feature": "lag1_risk_adj_momentum_20d",
+    "expression": "lag1_excess_ret_20d_mean / lag1_ret_60d_std",
+    "verdict": "REDUNDANT",
+    "rank_ic_mean": -0.0289,
+    "rank_icir": -0.148,
+    "icir": -0.106,
+    "pos_ratio": 0.448,
+    "days": 1650,
+    "reasons": "ICIR unstable (< 0.3); redundant w/ lag1_excess_ret_20d_mean"
+  },
+  {
+    "feature": "lag1_volume_breakout",
+    "expression": "lag1_ret_5d_mean * lag1_turnover_5d_mean",
+    "verdict": "REDUNDANT",
+    "rank_ic_mean": -0.0358,
+    "rank_icir": -0.196,
+    "icir": -0.174,
+    "pos_ratio": 0.414,
+    "days": 1650,
+    "reasons": "ICIR unstable (< 0.3); redundant w/ lag1_ret_5d_mean"
+  },
+  {
+    "feature": "lag1_relative_strength",
+    "expression": "lag1_industry_neutral_ret_20d * lag1_ret_20d",
+    "verdict": "MARGINAL",
+    "rank_ic_mean": -0.0115,
+    "rank_icir": -0.09,
+    "icir": -0.09,
+    "pos_ratio": 0.448,
+    "days": 1650,
+    "reasons": "RankIC marginal (< 0.02); ICIR unstable (< 0.3)"
+  },
+  {
+    "feature": "lag1_momentum_divergence",
+    "expression": "lag1_excess_ret_5d_mean - lag1_excess_ret_20d_mean",
+    "verdict": "MARGINAL",
+    "rank_ic_mean": -0.0214,
+    "rank_icir": -0.126,
+    "icir": -0.131,
+    "pos_ratio": 0.457,
+    "days": 1650,
+    "reasons": "ICIR unstable (< 0.3)"
+  },
+  {
+    "feature": "lag1_volatility_asymmetry",
+    "expression": "<lambda:lag1_volatility_asymmetry>",
+    "verdict": "MARGINAL",
+    "rank_ic_mean": -0.035,
+    "rank_icir": -0.197,
+    "icir": -0.197,
+    "pos_ratio": 0.418,
+    "days": 1650,
+    "reasons": "ICIR unstable (< 0.3)"
+  },
+  {
+    "feature": "lag1_flow_price_divergence",
+    "expression": "<lambda:lag1_flow_price_divergence>",
+    "verdict": "WEAK",
+    "rank_ic_mean": 0.0018,
+    "rank_icir": 0.014,
+    "icir": 0.03,
+    "pos_ratio": 0.502,
+    "days": 1650,
+    "reasons": "RankIC too low (< 0.01); ICIR unstable (< 0.3)"
+  },
+  {
+    "feature": "lag1_tech_consensus",
+    "expression": "<lambda:lag1_tech_consensus>",
+    "verdict": "MARGINAL",
+    "rank_ic_mean": -0.0228,
+    "rank_icir": -0.123,
+    "icir": -0.09,
+    "pos_ratio": 0.458,
+    "days": 1650,
+    "reasons": "ICIR unstable (< 0.3)"
+  },
+  {
+    "feature": "lag1_liquidity_adjusted_amp",
+    "expression": "lag1_amplitude / (lag1_turnover_rate + 0.001)",
+    "verdict": "MARGINAL",
+    "rank_ic_mean": 0.0425,
+    "rank_icir": 0.235,
+    "icir": 0.147,
+    "pos_ratio": 0.588,
+    "days": 1650,
+    "reasons": "ICIR unstable (< 0.3)"
+  },
+  {
+    "feature": "lag1_turnover_anomaly",
+    "expression": "lag1_turnover_rate / (lag1_turnover_20d_mean + 0.001)",
+    "verdict": "WEAK",
+    "rank_ic_mean": -0.0054,
+    "rank_icir": -0.036,
+    "icir": -0.088,
+    "pos_ratio": 0.506,
+    "days": 1650,
+    "reasons": "RankIC too low (< 0.01); ICIR unstable (< 0.3)"
+  }
+]

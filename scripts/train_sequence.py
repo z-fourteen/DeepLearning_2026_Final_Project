@@ -251,8 +251,8 @@ def main() -> None:
     pin_memory = bool(data_config.get("pin_memory", True)) and device.type == "cuda"
 
     train_loader = build_dataloader(train_dataset, batch_size, True, num_workers, pin_memory, batch_mode, seed)
-    val_loader = build_dataloader(val_dataset, batch_size, False, num_workers, pin_memory, "sample", seed)
-    test_loader = build_dataloader(test_dataset, batch_size, False, num_workers, pin_memory, "sample", seed)
+    val_loader = build_dataloader(val_dataset, batch_size, False, num_workers, pin_memory, batch_mode, seed)
+    test_loader = build_dataloader(test_dataset, batch_size, False, num_workers, pin_memory, batch_mode, seed)
 
     _MODEL_REGISTRY: dict[str, type] = {
         "gru_baseline": GRUStockModel,

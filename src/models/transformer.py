@@ -77,6 +77,35 @@ class LearnablePositionalEncoding(nn.Module):
         return x + self.pe[:, : x.size(1)]
 
 
+class AttentionPooling(nn.Module):
+    """Learnable weighted average over all time steps.
+
+    Each time step is scored by a small MLP, then softmax-normalized
+    to produce aggregation weights. This allows the model to learn
+    which historical positions are most relevant for the prediction.
+
+    Input:  [B, T, D] -> scores [B, T] -> weights [B, T] (softmax)
+    Output: weighted sum -> [B, D]
+    """
+
+    def __init__(self, d_model: int = 64, hidden_dim: int | None = None):
+        super().__init__()
+        if d_model <= 0:
+            raise ValueError(f"d_model must be positive, got {d_model}")
+        hidden = hidden_dim or max(d_model // 2, 16)
+        self.attention_net = nn.Sequential(
+            nn.Linear(d_model, hidden),
+            nn.Tanh(),
+            nn.Linear(hidden, 1),
+        )
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """Aggregate sequence via learned attention weights."""
+        scores = self.attention_net(x).squeeze(-1)              # [B, T]
+        weights = torch.softmax(scores, dim=-1)                  # [B, T]
+        return torch.sum(x * weights.unsqueeze(-1), dim=1)       # [B, D]
+
+
 class TransformerStockModel(BaseStockModel):
     """Transformer Encoder for stock sequence prediction.
 
@@ -84,9 +113,9 @@ class TransformerStockModel(BaseStockModel):
         Input [B, T, F]
           -> FeatureProjection     [B, T, d_model=64]
           -> PositionalEncoding    [B, T, 64]
-          -> (optional CLS token)  [B, T(+1), 64]
+          -> (CLS if pooling=cls)  [B, T(+1), 64]
           -> TransformerEncoder(L=2, H=4, d_ff=128, Pre-LN)  [B, T(+1), 64]
-          -> Pooling               [B, 64]
+          -> Pooling (cls|last_step|attention)       [B, 64]
           -> PredictionHead(GELU)  [B]
 
     Config keys:
@@ -94,12 +123,14 @@ class TransformerStockModel(BaseStockModel):
         num_encoder_layers, num_heads, dim_feedforward,
         attn_dropout, ff_dropout, activation, norm_first,
         positional_encoding ("sinusoidal" | "learnable"),
-        use_cls_token, cls_max_len,
+        pooling ("cls" | "last_step" | "attention"),
+        cls_max_len,
         head_hidden_dim, head_dropout.
     """
 
     _VALID_PE_TYPES = {"sinusoidal", "learnable"}
     _VALID_ACTIVATIONS = {"relu", "gelu"}
+    _VALID_POOLING = {"cls", "last_step", "attention"}
 
     def __init__(self, num_features: int = 62, config: Mapping[str, Any] | None = None):
         super().__init__(num_features=num_features, config=config)
@@ -116,7 +147,7 @@ class TransformerStockModel(BaseStockModel):
         norm_first = bool(self.config_value("norm_first", True))
 
         pos_enc_type = str(self.config_value("positional_encoding", "sinusoidal"))
-        use_cls_token = bool(self.config_value("use_cls_token", True))
+        pooling = str(self.config_value("pooling", "cls")).lower()
         cls_max_len = int(self.config_value("cls_max_len", 256))
 
         head_hidden_dim = int(self.config_value("head_hidden_dim", 64))
@@ -135,11 +166,19 @@ class TransformerStockModel(BaseStockModel):
             raise ValueError(
                 f"d_model ({d_model}) must be divisible by num_heads ({num_heads})"
             )
+        if pooling not in self._VALID_POOLING:
+            raise ValueError(
+                f"pooling must be one of {self._VALID_POOLING}, got '{pooling}'"
+            )
 
         self.d_model = d_model
         self.pos_enc_type = pos_enc_type
-        self.use_cls_token = use_cls_token
-        self.pooling = "cls" if use_cls_token else "last_step"
+        self.pooling = pooling
+
+        # Backward compat: treat use_cls_token as alias for "cls"
+        _legacy_cls = bool(self.config_value("use_cls_token", None))
+        if _legacy_cls and pooling != "cls":
+            self.pooling = "cls"
 
         # 1. Feature projection
         self.input_proj = FeatureProjection(
@@ -156,10 +195,13 @@ class TransformerStockModel(BaseStockModel):
         )
         self.pos_encoder = pe_cls(d_model=d_model, max_len=cls_max_len)
 
-        # 3. Optional CLS token
-        if use_cls_token:
+        # 3. Pooling-specific modules
+        if self.pooling == "cls":
             self.cls_token = nn.Parameter(torch.zeros(1, 1, d_model))
             nn.init.xavier_uniform_(self.cls_token)
+        elif self.pooling == "attention":
+            self.attn_pool = AttentionPooling(d_model=d_model)
+        # last_step: no extra modules needed
 
         # 4. Transformer encoder
         encoder_layer = nn.TransformerEncoderLayer(
@@ -202,13 +244,18 @@ class TransformerStockModel(BaseStockModel):
         z = self.input_proj(x)                    # [B, T, d_model]
         z = self.pos_encoder(z)                    # [B, T, d_model]
 
-        if self.use_cls_token:
+        if self.pooling == "cls":
             cls = self.cls_token.expand(z.size(0), -1, -1)  # [B, 1, d_model]
             z = torch.cat([cls, z], dim=1)         # [B, T+1, d_model]
 
         encoded = self.encoder(z)                   # [B, T(+1), d_model]
 
-        context = encoded[:, 0] if self.use_cls_token else encoded[:, -1]  # [B, d_model]
+        if self.pooling == "cls":
+            context = encoded[:, 0]                 # [B, d_model]
+        elif self.pooling == "attention":
+            context = self.attn_pool(encoded)       # [B, d_model]
+        else:  # last_step
+            context = encoded[:, -1]                # [B, d_model]
         context = self.context_norm(context)        # [B, d_model]
         return self.head(context)                    # [B]
 
