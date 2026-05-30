@@ -57,6 +57,7 @@ LABEL_COLUMNS = [
     "benchmark_next_open_to_exit_close_return",
 ]
 PREDICTION_COLUMNS = {"trade_date", "ts_code", "pred_score", "split"}
+COMPETITION_MIN_INVESTED = 0.80
 
 
 def parse_int_list(value: str) -> list[int]:
@@ -94,11 +95,25 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--candidate-multiplier", type=float, default=5.0)
     parser.add_argument("--exposure-cap", type=float, default=0.35)
     parser.add_argument("--exposure-slack-penalty", type=float, default=25.0)
+    parser.add_argument(
+        "--buy-capacity-slack-penalty",
+        type=float,
+        default=1000.0,
+        help=(
+            "Penalty for overriding T+1 buy participation capacity. The >=80% invested rule stays hard; "
+            "this slack records any capacity override needed to satisfy it."
+        ),
+    )
     parser.add_argument("--cash-penalty", type=float, default=0.0)
     parser.add_argument("--min-invested-shortfall-penalty", type=float, default=0.0)
     parser.add_argument("--solver", default="CLARABEL")
     parser.add_argument("--single-name-cap", type=float, default=0.0)
-    parser.add_argument("--min-invested", type=float, default=0.0)
+    parser.add_argument(
+        "--min-invested",
+        type=float,
+        default=COMPETITION_MIN_INVESTED,
+        help="Hard minimum invested weight. Default 0.80 matches the competition exposure rule.",
+    )
     parser.add_argument("--turnover-cap", type=float, default=1.0)
     parser.add_argument("--portfolio-nav", type=float, default=10_000_000.0)
     parser.add_argument("--participation-cap", type=float, default=0.03)
@@ -106,7 +121,19 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--slippage-bps", type=float, default=5.0)
     parser.add_argument("--rebalance-stride", type=int, default=5)
     parser.add_argument("--min-daily-count", type=int, default=40)
-    return parser.parse_args()
+    args = parser.parse_args()
+    if not 0.0 <= args.min_invested <= 1.0:
+        raise ValueError(f"--min-invested must be in [0, 1], got {args.min_invested}")
+    if args.min_invested_shortfall_penalty > 0:
+        print(
+            "WARNING: --min-invested-shortfall-penalty softens the minimum invested constraint; "
+            "competition runs should keep it at 0 for a hard >=80% invested rule."
+        )
+    if args.buy_capacity_slack_penalty <= 0:
+        raise ValueError(
+            f"--buy-capacity-slack-penalty must be positive, got {args.buy_capacity_slack_penalty}"
+        )
+    return args
 
 
 def json_safe(value: Any) -> Any:
@@ -210,9 +237,34 @@ def prepare_lp_universe(
     risk_cols: list[str],
     k: int,
     candidate_multiplier: float,
+    min_invested: float,
+    single_name_cap: float,
+    portfolio_nav: float,
+    participation_cap: float,
 ) -> pd.DataFrame:
     scored = day.dropna(subset=["pred_score"]).sort_values("pred_score", ascending=False)
     candidate_count = min(len(scored), max(k, int(math.ceil(k * candidate_multiplier))))
+    if min_invested > 0 and not scored.empty:
+        effective_cap = float(single_name_cap if single_name_cap > 0 else 1.0 / k)
+        current_invested = float(sum(current.values()))
+        selected_codes: set[str] = set(current)
+        for row in scored.itertuples(index=False):
+            selected_codes.add(str(row.ts_code))
+            candidate_count = max(candidate_count, len(selected_codes))
+            if len(selected_codes) < candidate_count:
+                continue
+            selected = scored[scored["ts_code"].astype(str).isin(selected_codes)]
+            buyable = selected["buy_executable_t1_open"].fillna(False).astype(bool).to_numpy()
+            amount = selected["next_amount"].fillna(0.0).astype("float64").to_numpy()
+            buy_capacity = np.where(
+                buyable,
+                np.maximum(0.0, float(participation_cap) * amount / float(portfolio_nav)),
+                0.0,
+            )
+            old_weight = selected["ts_code"].astype(str).map(current).fillna(0.0).astype("float64").to_numpy()
+            max_reachable = float(np.minimum(effective_cap, old_weight + buy_capacity).sum())
+            if max(current_invested, max_reachable) >= float(min_invested):
+                break
     candidate_codes = set(scored.head(candidate_count)["ts_code"].astype(str))
     candidate_codes.update(current)
     universe = day[day["ts_code"].astype(str).isin(candidate_codes)].copy()
@@ -232,6 +284,67 @@ def prepare_lp_universe(
     return universe
 
 
+def portfolio_stats(
+    *,
+    status: str,
+    message: str,
+    fallback_used: bool,
+    codes: list[str],
+    weights: np.ndarray,
+    current: dict[str, float],
+    exposure_values: list[np.ndarray],
+    exposure_cap: float,
+    min_invested: float,
+    buys_value: np.ndarray | None = None,
+    sells_value: np.ndarray | None = None,
+    exposure_slacks: np.ndarray | None = None,
+    buy_capacity_slack: np.ndarray | None = None,
+    min_invested_shortfall: float | None = None,
+    objective_value: float = float("nan"),
+) -> tuple[dict[str, float], dict[str, Any]]:
+    buys = np.zeros_like(weights) if buys_value is None else buys_value
+    sells = np.zeros_like(weights) if sells_value is None else sells_value
+    slacks = np.array([], dtype="float64") if exposure_slacks is None else exposure_slacks
+    buy_slack = np.array([], dtype="float64") if buy_capacity_slack is None else buy_capacity_slack
+
+    portfolio = {code: float(weight) for code, weight in zip(codes, weights) if weight > 1e-8}
+    invested = float(weights.sum())
+    desired_turnover = float(
+        sum(abs(current.get(code, 0.0) - portfolio.get(code, 0.0)) for code in set(current) | set(portfolio))
+    )
+    filled_turnover = float(buys.sum() + sells.sum())
+    abs_exposures = [float(abs(np.dot(weights, exposure))) for exposure in exposure_values]
+    cap_breach = [max(0.0, exposure - float(exposure_cap)) for exposure in abs_exposures]
+    shortfall = (
+        max(0.0, float(min_invested) - invested)
+        if min_invested_shortfall is None
+        else float(max(0.0, min_invested_shortfall))
+    )
+
+    return portfolio, {
+        "optimizer_status": status,
+        "solver_message": message,
+        "fallback_used": fallback_used,
+        "invested_weight": invested,
+        "cash_weight": float(max(0.0, 1.0 - invested)),
+        "desired_turnover": desired_turnover,
+        "filled_turnover": filled_turnover,
+        "filled_desired_ratio": float(filled_turnover / desired_turnover) if desired_turnover > 1e-12 else 1.0,
+        "buy_turnover": float(buys.sum()),
+        "sell_turnover": float(sells.sum()),
+        "position_count": int(len(portfolio)),
+        "max_abs_exposure_z": float(max(abs_exposures)) if abs_exposures else 0.0,
+        "avg_abs_exposure_z": float(np.mean(abs_exposures)) if abs_exposures else 0.0,
+        "max_exposure_slack": float(slacks.max()) if len(slacks) else (float(max(cap_breach)) if cap_breach else 0.0),
+        "avg_exposure_slack": float(slacks.mean()) if len(slacks) else (float(np.mean(cap_breach)) if cap_breach else 0.0),
+        "total_exposure_slack": float(slacks.sum()) if len(slacks) else (float(sum(cap_breach)) if cap_breach else 0.0),
+        "buy_capacity_slack": float(buy_slack.sum()) if len(buy_slack) else 0.0,
+        "min_invested_shortfall": shortfall,
+        "min_invested_rule_ok": float(shortfall <= 1e-6),
+        "objective_value": objective_value,
+    }
+
+
 def solve_day_lp(
     universe: pd.DataFrame,
     current: dict[str, float],
@@ -246,32 +359,25 @@ def solve_day_lp(
     portfolio_nav: float,
     participation_cap: float,
     exposure_slack_penalty: float,
+    buy_capacity_slack_penalty: float,
     cash_penalty: float,
     min_invested_shortfall_penalty: float,
     solver: str,
 ) -> tuple[dict[str, float], dict[str, Any]]:
     if universe.empty:
-        invested = float(sum(current.values()))
-        return current, {
-            "optimizer_status": "EmptyUniverse",
-            "solver_message": "empty universe",
-            "fallback_used": True,
-            "invested_weight": invested,
-            "cash_weight": float(max(0.0, 1.0 - invested)),
-            "desired_turnover": 0.0,
-            "filled_turnover": 0.0,
-            "filled_desired_ratio": 1.0,
-            "buy_turnover": 0.0,
-            "sell_turnover": 0.0,
-            "position_count": int(sum(weight > 1e-8 for weight in current.values())),
-            "max_abs_exposure_z": 0.0,
-            "avg_abs_exposure_z": 0.0,
-            "max_exposure_slack": 0.0,
-            "avg_exposure_slack": 0.0,
-            "total_exposure_slack": 0.0,
-            "min_invested_shortfall": max(0.0, float(min_invested) - invested),
-            "objective_value": float("nan"),
-        }
+        codes = sorted(current)
+        weights = np.array([current[code] for code in codes], dtype="float64")
+        return portfolio_stats(
+            status="MinInvestedUnreachable",
+            message="empty universe",
+            fallback_used=True,
+            codes=codes,
+            weights=weights,
+            current=current,
+            exposure_values=[],
+            exposure_cap=exposure_cap,
+            min_invested=min_invested,
+        )
 
     codes = universe["ts_code"].astype(str).tolist()
     n = len(codes)
@@ -291,30 +397,39 @@ def solve_day_lp(
             exposure_values.append(universe[z_col].to_numpy(dtype="float64"))
     e_active = len(exposure_values)
 
-    def fallback_stats(status: str, message: str) -> dict[str, Any]:
-        abs_exposures = [float(abs(np.dot(old, exposure))) for exposure in exposure_values]
-        invested = float(old.sum())
-        cap_breach = [max(0.0, exposure - float(exposure_cap)) for exposure in abs_exposures]
-        return {
-            "optimizer_status": status,
-            "solver_message": message,
-            "fallback_used": True,
-            "invested_weight": invested,
-            "cash_weight": float(max(0.0, 1.0 - invested)),
-            "desired_turnover": 0.0,
-            "filled_turnover": 0.0,
-            "filled_desired_ratio": 1.0,
-            "buy_turnover": 0.0,
-            "sell_turnover": 0.0,
-            "position_count": int(sum(weight > 1e-8 for weight in old)),
-            "max_abs_exposure_z": float(max(abs_exposures)) if abs_exposures else 0.0,
-            "avg_abs_exposure_z": float(np.mean(abs_exposures)) if abs_exposures else 0.0,
-            "max_exposure_slack": float(max(cap_breach)) if cap_breach else 0.0,
-            "avg_exposure_slack": float(np.mean(cap_breach)) if cap_breach else 0.0,
-            "total_exposure_slack": float(sum(cap_breach)) if cap_breach else 0.0,
-            "min_invested_shortfall": max(0.0, float(min_invested) - invested),
-            "objective_value": float("nan"),
-        }
+    def legal_fallback(status: str, message: str) -> tuple[dict[str, float], dict[str, Any]]:
+        weights = old.copy()
+        buys_value = np.zeros(n, dtype="float64")
+        sell_value = np.zeros(n, dtype="float64")
+        remaining_turnover = float(turnover_cap)
+        buy_capacity = np.where(buyable, capacity, 0.0)
+
+        for idx in np.argsort(-alpha):
+            invested = float(weights.sum())
+            if invested >= float(min_invested) - 1e-8 or remaining_turnover <= 1e-12:
+                break
+            room = max(0.0, float(effective_cap) - float(weights[idx]))
+            fill = min(room, float(buy_capacity[idx]), remaining_turnover, float(min_invested) - invested)
+            if fill <= 1e-12:
+                continue
+            weights[idx] += fill
+            buys_value[idx] += fill
+            remaining_turnover -= fill
+
+        fallback_status = "LegalFallback" if float(weights.sum()) >= float(min_invested) - 1e-6 else "MinInvestedUnreachable"
+        return portfolio_stats(
+            status=fallback_status,
+            message=message if fallback_status == "LegalFallback" else f"{message}; min invested unreachable",
+            fallback_used=True,
+            codes=codes,
+            weights=weights,
+            current=current,
+            exposure_values=exposure_values,
+            exposure_cap=exposure_cap,
+            min_invested=min_invested,
+            buys_value=buys_value,
+            sells_value=sell_value,
+        )
 
     try:
         w = cp.Variable(n, nonneg=True)
@@ -327,9 +442,10 @@ def solve_day_lp(
 
         buy_capacity = np.where(buyable, capacity, 0.0)
         sell_capacity = np.where(sellable, capacity, 0.0)
+        buy_capacity_slack = cp.Variable(n, nonneg=True)
         constraints = [
             w <= effective_cap,
-            buys <= buy_capacity,
+            buys <= buy_capacity + buy_capacity_slack,
             sells <= sell_capacity,
             w == old + buys - sells,
             cp.sum(w) <= 1.0,
@@ -362,6 +478,7 @@ def solve_day_lp(
             - float(turnover_penalty) * cp.sum(buys + sells)
             - style_cost
             - slack_cost
+            - float(buy_capacity_slack_penalty) * cp.sum(buy_capacity_slack)
             - (
                 float(min_invested_shortfall_penalty) * invested_shortfall
                 if invested_shortfall is not None
@@ -371,11 +488,10 @@ def solve_day_lp(
         problem = cp.Problem(objective, constraints)
         problem.solve(solver=solver.upper())
     except Exception as exc:  # pragma: no cover - defensive solver boundary
-        return current, fallback_stats("SolverError", str(exc))
+        return legal_fallback("SolverError", str(exc))
 
     if problem.status not in {cp.OPTIMAL, cp.OPTIMAL_INACCURATE}:
-        status = "Infeasible" if problem.status in {cp.INFEASIBLE, cp.INFEASIBLE_INACCURATE} else "SolverError"
-        return current, fallback_stats(status, str(problem.status))
+        return legal_fallback(str(problem.status), str(problem.status))
 
     weights = np.asarray(w.value, dtype="float64")
     buys_value = np.asarray(buys.value, dtype="float64")
@@ -383,33 +499,29 @@ def solve_day_lp(
     pos_slacks = np.asarray(slack_pos.value, dtype="float64") if e_active and slack_pos is not None else np.array([], dtype="float64")
     neg_slacks = np.asarray(slack_neg.value, dtype="float64") if e_active and slack_neg is not None else np.array([], dtype="float64")
     exposure_slacks = pos_slacks + neg_slacks
+    buy_capacity_slack_value = np.asarray(buy_capacity_slack.value, dtype="float64")
     shortfall_value = float(invested_shortfall.value) if min_invested_shortfall_penalty > 0 and invested_shortfall is not None else 0.0
-    portfolio = {code: float(weight) for code, weight in zip(codes, weights) if weight > 1e-8}
-    abs_exposures = [float(abs(np.dot(weights, exposure))) for exposure in exposure_values]
     invested = float(weights.sum())
-    desired_turnover = float(sum(abs(current.get(code, 0.0) - portfolio.get(code, 0.0)) for code in set(current) | set(portfolio)))
-    filled_turnover = float(buys_value.sum() + sells_value.sum())
+    if min_invested_shortfall_penalty <= 0 and invested < float(min_invested) - 1e-6:
+        return legal_fallback(str(problem.status), "solver returned portfolio below hard min invested")
     status = "Optimal" if problem.status == cp.OPTIMAL else "Feasible"
-    return portfolio, {
-        "optimizer_status": status,
-        "solver_message": str(problem.status),
-        "fallback_used": False,
-        "invested_weight": invested,
-        "cash_weight": float(max(0.0, 1.0 - invested)),
-        "desired_turnover": desired_turnover,
-        "filled_turnover": filled_turnover,
-        "filled_desired_ratio": float(filled_turnover / desired_turnover) if desired_turnover > 1e-12 else 1.0,
-        "buy_turnover": float(buys_value.sum()),
-        "sell_turnover": float(sells_value.sum()),
-        "position_count": int(len(portfolio)),
-        "max_abs_exposure_z": float(max(abs_exposures)) if abs_exposures else 0.0,
-        "avg_abs_exposure_z": float(np.mean(abs_exposures)) if abs_exposures else 0.0,
-        "max_exposure_slack": float(exposure_slacks.max()) if len(exposure_slacks) else 0.0,
-        "avg_exposure_slack": float(exposure_slacks.mean()) if len(exposure_slacks) else 0.0,
-        "total_exposure_slack": float(exposure_slacks.sum()) if len(exposure_slacks) else 0.0,
-        "min_invested_shortfall": shortfall_value,
-        "objective_value": float(problem.value) if problem.value is not None else float("nan"),
-    }
+    return portfolio_stats(
+        status=status,
+        message=str(problem.status),
+        fallback_used=False,
+        codes=codes,
+        weights=weights,
+        current=current,
+        exposure_values=exposure_values,
+        exposure_cap=exposure_cap,
+        min_invested=min_invested,
+        buys_value=buys_value,
+        sells_value=sells_value,
+        exposure_slacks=exposure_slacks,
+        buy_capacity_slack=buy_capacity_slack_value,
+        min_invested_shortfall=shortfall_value,
+        objective_value=float(problem.value) if problem.value is not None else float("nan"),
+    )
 
 
 def weighted_return(weights: dict[str, float], day: pd.DataFrame) -> float:
@@ -442,7 +554,17 @@ def run_optimizer(args: argparse.Namespace, data: pd.DataFrame) -> pd.DataFrame:
                         for turnover_penalty in args.turnover_penalty:
                             key = (risk_control, k, style_penalty, turnover_penalty)
                             current = states.get(key, {})
-                            universe = prepare_lp_universe(day, current, risk_cols, k, args.candidate_multiplier)
+                            universe = prepare_lp_universe(
+                                day,
+                                current,
+                                risk_cols,
+                                k,
+                                args.candidate_multiplier,
+                                args.min_invested,
+                                args.single_name_cap,
+                                args.portfolio_nav,
+                                args.participation_cap,
+                            )
                             weights, stats = solve_day_lp(
                                 universe=universe,
                                 current=current,
@@ -457,6 +579,7 @@ def run_optimizer(args: argparse.Namespace, data: pd.DataFrame) -> pd.DataFrame:
                                 portfolio_nav=args.portfolio_nav,
                                 participation_cap=args.participation_cap,
                                 exposure_slack_penalty=args.exposure_slack_penalty,
+                                buy_capacity_slack_penalty=args.buy_capacity_slack_penalty,
                                 cash_penalty=args.cash_penalty,
                                 min_invested_shortfall_penalty=args.min_invested_shortfall_penalty,
                                 solver=args.solver,
@@ -485,6 +608,7 @@ def run_optimizer(args: argparse.Namespace, data: pd.DataFrame) -> pd.DataFrame:
                                     "turnover_cap": float(args.turnover_cap),
                                     "exposure_cap": float(args.exposure_cap),
                                     "exposure_slack_penalty": float(args.exposure_slack_penalty),
+                                    "buy_capacity_slack_penalty": float(args.buy_capacity_slack_penalty),
                                     "cash_penalty": float(args.cash_penalty),
                                     "min_invested_shortfall_penalty": float(args.min_invested_shortfall_penalty),
                                     "single_name_cap": float(args.single_name_cap if args.single_name_cap > 0 else 1.0 / k),
@@ -526,7 +650,9 @@ def summarize(periods: pd.DataFrame) -> pd.DataFrame:
                 "avg_max_exposure_slack": float(group["max_exposure_slack"].mean()),
                 "avg_exposure_slack": float(group["avg_exposure_slack"].mean()),
                 "avg_total_exposure_slack": float(group["total_exposure_slack"].mean()),
+                "avg_buy_capacity_slack": float(group["buy_capacity_slack"].mean()),
                 "avg_min_invested_shortfall": float(group["min_invested_shortfall"].mean()),
+                "min_invested_rule_pass_rate": float(group["min_invested_rule_ok"].mean()),
             }
         )
         rows.append(row)
@@ -554,6 +680,7 @@ def main() -> None:
         "candidate_multiplier": float(args.candidate_multiplier),
         "exposure_cap": float(args.exposure_cap),
         "exposure_slack_penalty": float(args.exposure_slack_penalty),
+        "buy_capacity_slack_penalty": float(args.buy_capacity_slack_penalty),
         "cash_penalty": float(args.cash_penalty),
         "min_invested_shortfall_penalty": float(args.min_invested_shortfall_penalty),
         "solver": args.solver,

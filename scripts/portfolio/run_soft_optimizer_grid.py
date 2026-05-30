@@ -57,6 +57,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--participation-cap", type=parse_float_list, required=True)
     parser.add_argument("--single-name-cap", type=parse_float_list, required=True)
     parser.add_argument("--exposure-slack-penalty", type=parse_float_list, required=True)
+    parser.add_argument("--buy-capacity-slack-penalty", type=parse_float_list, default=parse_float_list("1000"))
     parser.add_argument("--cash-penalty", type=parse_float_list, required=True)
     parser.add_argument("--min-invested-shortfall-penalty", type=parse_float_list, default=parse_float_list("0"))
     parser.add_argument("--candidate-multiplier", type=float, default=5.0)
@@ -90,6 +91,7 @@ def main() -> None:
             args.participation_cap,
             args.single_name_cap,
             args.exposure_slack_penalty,
+            args.buy_capacity_slack_penalty,
             args.cash_penalty,
             args.min_invested_shortfall_penalty,
         )
@@ -108,6 +110,7 @@ def main() -> None:
         participation_cap,
         single_name_cap,
         exposure_slack_penalty,
+        buy_capacity_slack_penalty,
         cash_penalty,
         min_invested_shortfall_penalty,
     ) in enumerate(grid, start=1):
@@ -132,6 +135,7 @@ def main() -> None:
             candidate_multiplier=args.candidate_multiplier,
             exposure_cap=float(exposure_cap),
             exposure_slack_penalty=float(exposure_slack_penalty),
+            buy_capacity_slack_penalty=float(buy_capacity_slack_penalty),
             cash_penalty=float(cash_penalty),
             min_invested_shortfall_penalty=float(min_invested_shortfall_penalty),
             single_name_cap=float(single_name_cap),
@@ -176,6 +180,7 @@ def main() -> None:
         "participation_cap": args.participation_cap,
         "single_name_cap": args.single_name_cap,
         "exposure_slack_penalty": args.exposure_slack_penalty,
+        "buy_capacity_slack_penalty": args.buy_capacity_slack_penalty,
         "cash_penalty": args.cash_penalty,
         "min_invested_shortfall_penalty": args.min_invested_shortfall_penalty,
         "candidate_multiplier": float(args.candidate_multiplier),

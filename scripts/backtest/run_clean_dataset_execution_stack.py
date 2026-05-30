@@ -54,6 +54,17 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--slippage-bps", default="5")
     parser.add_argument("--rebalance-stride", default="5")
     parser.add_argument("--min-daily-count", default="40")
+    parser.add_argument("--buy-capacity-slack-penalty", default="1000")
+    parser.add_argument(
+        "--min-invested",
+        default="0.80",
+        help="Minimum invested weight passed to the optimizer. Default follows the competition rule.",
+    )
+    parser.add_argument(
+        "--min-invested-shortfall-penalty",
+        default="0",
+        help="Keep at 0 for a hard minimum invested constraint.",
+    )
     parser.add_argument("--only-existing", action="store_true", help="Skip runs whose prediction file is missing.")
     return parser.parse_args()
 
@@ -196,6 +207,12 @@ def main() -> None:
                     args.rebalance_stride,
                     "--min-daily-count",
                     args.min_daily_count,
+                    "--buy-capacity-slack-penalty",
+                    args.buy_capacity_slack_penalty,
+                    "--min-invested",
+                    args.min_invested,
+                    "--min-invested-shortfall-penalty",
+                    args.min_invested_shortfall_penalty,
                 ]
             )
 
@@ -217,6 +234,9 @@ def main() -> None:
         "summary": str(summary_path),
         "method": "clean_dataset_strictmask_t1_fill_optional_optimizer",
         "optimizer_script": args.optimizer_script or "",
+        "buy_capacity_slack_penalty": args.buy_capacity_slack_penalty,
+        "min_invested": args.min_invested,
+        "min_invested_shortfall_penalty": args.min_invested_shortfall_penalty,
     }
     (out_dir / "manifest.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
     print(json.dumps(manifest, ensure_ascii=False, indent=2))

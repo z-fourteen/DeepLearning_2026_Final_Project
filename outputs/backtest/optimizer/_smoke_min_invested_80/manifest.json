@@ -1,0 +1,33 @@
+{
+  "predictions": "outputs/runs/regime_gated_gru_l20_clean_alpha_resid_style_topk20/predictions.parquet",
+  "mart": "data/mart/datasets/core/dataset_v20260526.parquet",
+  "labels": "data/mart/labels/execution_labels_v20260526.parquet",
+  "output_dir": "outputs\\backtest\\optimizer\\_smoke_min_invested_80",
+  "risk_control": [
+    "industry_proxy"
+  ],
+  "k": [
+    10
+  ],
+  "style_penalty": [
+    0.1
+  ],
+  "turnover_penalty": [
+    0.02
+  ],
+  "candidate_multiplier": 5.0,
+  "exposure_cap": 0.35,
+  "exposure_slack_penalty": 25.0,
+  "buy_capacity_slack_penalty": 1000.0,
+  "cash_penalty": 0.0,
+  "min_invested_shortfall_penalty": 0.0,
+  "solver": "CLARABEL",
+  "single_name_cap": 0.0,
+  "min_invested": 0.8,
+  "turnover_cap": 1.0,
+  "portfolio_nav": 10000000.0,
+  "participation_cap": 0.03,
+  "period_rows": 157,
+  "summary_rows": 2,
+  "method": "cvxpy_soft_exposure_slack_optimizer_cash_buffer_t1"
+}
