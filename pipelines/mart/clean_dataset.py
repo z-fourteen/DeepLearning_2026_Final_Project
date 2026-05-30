@@ -35,7 +35,7 @@ def unique_list(values: list[str]) -> list[str]:
 
 
 def read_mart_dataset(project_root: Path, data_version: str) -> pd.DataFrame:
-    data_config = load_yaml(project_root / "configs" / "data.yaml")
+    data_config = load_yaml(project_root / "configs" / "data" / "data.yaml")
     dataset_path = project_root / data_config["mart"]["datasets_dir"] / f"dataset_{data_version}.parquet"
     if not dataset_path.exists():
         raise FileNotFoundError(f"Missing mart dataset: {dataset_path}")
@@ -83,22 +83,40 @@ def add_industry_from_pool(project_root: Path, data_config: dict[str, Any], df: 
 
 
 def resolve_split_config(project_root: Path, split_name: str | None) -> tuple[str, dict[str, Any]]:
-    config = load_yaml(project_root / "configs" / "splits.yaml")
+    config = load_yaml(project_root / "configs" / "data" / "splits.yaml")
     name = split_name or config["default_split"]
     split = config["splits"].get(name)
     if split is None:
         raise ValueError(f"Unknown split: {name}")
+    if "folds" in split:
+        active_fold = split.get("active_fold")
+        if not active_fold:
+            raise ValueError(f"Split {name} declares folds but no active_fold.")
+        fold = split["folds"].get(active_fold)
+        if fold is None:
+            raise ValueError(f"Unknown active_fold for {name}: {active_fold}")
+        fold = dict(fold)
+        fold["scheme"] = split.get("scheme", config.get("split_policy", {}).get("scheme"))
+        fold["fold_name"] = active_fold
+        fold["split_name"] = name
+        fold["split_policy"] = config.get("split_policy", {})
+        return name, fold
     return name, split
 
 
 def add_split_column(df: pd.DataFrame, split: dict[str, Any]) -> pd.DataFrame:
     result = df.copy()
     result["split"] = "unused"
+    result["purge_reason"] = ""
     for split_name in ["train", "validation", "test"]:
         start = split[split_name]["start_date"]
         end = split[split_name]["end_date"]
         result.loc[result["trade_date"].between(start, end), "split"] = split_name
-    return result[result["split"].ne("unused")].reset_index(drop=True)
+    for purge_range in split.get("purge_ranges", []):
+        mask = result["trade_date"].between(purge_range["start_date"], purge_range["end_date"])
+        result.loc[mask, "split"] = "purged"
+        result.loc[mask, "purge_reason"] = purge_range.get("reason", "purged")
+    return result[result["split"].isin(["train", "validation", "test"])].reset_index(drop=True)
 
 
 def read_state_table(project_root: Path, data_config: dict[str, Any]) -> pd.DataFrame:
@@ -401,7 +419,7 @@ def build_clean_sequence_dataset(
     lookback: int,
     split_name: str | None,
 ) -> dict[str, Any]:
-    data_config = load_yaml(project_root / "configs" / "data.yaml")
+    data_config = load_yaml(project_root / "configs" / "data" / "data.yaml")
     split_name, split = resolve_split_config(project_root, split_name)
     clean_config = load_clean_feature_config(project_root, clean_config_path)
     df = read_mart_dataset(project_root, data_version)
@@ -471,6 +489,9 @@ def build_clean_sequence_dataset(
         "filter_log_path": str(filter_log_path),
         "data_version": data_version,
         "split_name": split_name,
+        "split_scheme": split.get("scheme", "single_holdout"),
+        "active_fold": split.get("fold_name", ""),
+        "purge_ranges": split.get("purge_ranges", []),
         "lookback": lookback,
         "feature_set": name,
         "dataset_slug": dataset_slug,

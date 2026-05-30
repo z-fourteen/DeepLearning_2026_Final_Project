@@ -21,23 +21,41 @@ def read_mart_dataset(project_root: Path, data_config: dict[str, Any], data_vers
 
 
 def resolve_split_config(project_root: Path, split_name: str | None) -> tuple[str, dict[str, Any]]:
-    config = load_yaml(project_root / "configs" / "splits.yaml")
+    config = load_yaml(project_root / "configs" / "data" / "splits.yaml")
     name = split_name or config["default_split"]
     split = config["splits"].get(name)
     if split is None:
         raise ValueError(f"Unknown split: {name}")
+    if "folds" in split:
+        active_fold = split.get("active_fold")
+        if not active_fold:
+            raise ValueError(f"Split {name} declares folds but no active_fold.")
+        fold = split["folds"].get(active_fold)
+        if fold is None:
+            raise ValueError(f"Unknown active_fold for {name}: {active_fold}")
+        fold = dict(fold)
+        fold["scheme"] = split.get("scheme", config.get("split_policy", {}).get("scheme"))
+        fold["fold_name"] = active_fold
+        fold["split_name"] = name
+        fold["split_policy"] = config.get("split_policy", {})
+        return name, fold
     return name, split
 
 
 def add_split_column(df: pd.DataFrame, split: dict[str, Any]) -> pd.DataFrame:
     result = df.copy()
     result["split"] = "unused"
+    result["purge_reason"] = ""
     for split_name in ["train", "validation", "test"]:
         start = split[split_name]["start_date"]
         end = split[split_name]["end_date"]
         mask = result["trade_date"].between(start, end)
         result.loc[mask, "split"] = split_name
-    return result[result["split"].ne("unused")].reset_index(drop=True)
+    for purge_range in split.get("purge_ranges", []):
+        mask = result["trade_date"].between(purge_range["start_date"], purge_range["end_date"])
+        result.loc[mask, "split"] = "purged"
+        result.loc[mask, "purge_reason"] = purge_range.get("reason", "purged")
+    return result[result["split"].isin(["train", "validation", "test"])].reset_index(drop=True)
 
 
 def selected_features(project_root: Path, feature_set: str) -> list[str]:
@@ -55,7 +73,7 @@ def build_lgbm_dataset(
     label_column: str,
     split_name: str | None = None,
 ) -> dict[str, Any]:
-    data_config = load_yaml(project_root / "configs" / "data.yaml")
+    data_config = load_yaml(project_root / "configs" / "data" / "data.yaml")
     split_name, split = resolve_split_config(project_root, split_name)
     df = read_mart_dataset(project_root, data_config, data_version)
     features = [feature for feature in selected_features(project_root, feature_set) if feature in df.columns]
@@ -79,6 +97,9 @@ def build_lgbm_dataset(
         "features": int(len(features)),
         "feature_set": feature_set,
         "split_name": split_name,
+        "split_scheme": split.get("scheme", "single_holdout"),
+        "active_fold": split.get("fold_name", ""),
+        "purge_ranges": split.get("purge_ranges", []),
         "split_counts": dataset["split"].value_counts().to_dict(),
     }
 
@@ -91,7 +112,7 @@ def build_sequence_dataset(
     lookback: int,
     split_name: str | None = None,
 ) -> dict[str, Any]:
-    data_config = load_yaml(project_root / "configs" / "data.yaml")
+    data_config = load_yaml(project_root / "configs" / "data" / "data.yaml")
     split_name, split = resolve_split_config(project_root, split_name)
     df = read_mart_dataset(project_root, data_config, data_version)
     features = [feature for feature in selected_features(project_root, feature_set) if feature in df.columns]
@@ -156,6 +177,9 @@ def build_sequence_dataset(
         "features": int(len(features)),
         "feature_set": feature_set,
         "split_name": split_name,
+        "split_scheme": split.get("scheme", "single_holdout"),
+        "active_fold": split.get("fold_name", ""),
+        "purge_ranges": split.get("purge_ranges", []),
         "split_counts": split_counts,
     }
 

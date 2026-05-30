@@ -1,36 +1,31 @@
 experiment:
-  name: chinext_excess5d_modeling_v1
+  name: chinext_gru_clean_dataset_v1
   data_version: v20260526
   benchmark: "399006.SZ"
   label_column: label_rel_return
-  split_name: chinext_2016_2026_v1
-  feature_sets:
-    baseline: baseline_lightgbm_fixed
-    sequence: advanced_sequence_fixed
+  execution_label_column: execution_return_open_to_close5
+  split_name: chinext_purged_walk_forward_v1
+  feature_set: advanced_sequence_clean_v1
 
-models:
-  lightgbm:
-    objective: regression
-    metric: l2
-    learning_rate: 0.03
-    num_leaves: 31
-    feature_fraction: 0.8
-    bagging_fraction: 0.8
-    bagging_freq: 1
-    min_data_in_leaf: 80
-    num_boost_round: 2000
-    early_stopping_rounds: 100
-  sequence:
-    lookbacks: [20, 60]
-    batch_size: 256
-    max_epochs: 80
-    learning_rate: 0.001
-    weight_decay: 0.0001
-    dropout: 0.2
+modeling:
+  primary_model: gru_l20_clean_alpha_resid_style
+  baseline_model: gru_l20_clean_alpha_only
+  lookback: 20
+  batch_size: 256
+  max_epochs: 80
+  loss_fn: mse_ic
+  early_stop_metric: rank_ic_mean
 
-backtest:
-  top_k: [10, 20, 30]
+execution:
+  simulator: t1_open_fill
   holding_days: 5
-  rebalance: weekly
-  execution_price: next_open
-  transaction_cost_bps: [10, 20]
+  rebalance_stride: 5
+  portfolio_nav: 10000000.0
+  participation_cap: 0.03
+  transaction_cost_bps: 10.0
+  slippage_bps: 5.0
+
+audit:
+  point_in_time: true
+  residual_alpha: true
+  capacity_sensitivity: true
