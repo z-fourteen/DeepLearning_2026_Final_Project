@@ -1,0 +1,28 @@
+# ============================================================
+#  Transformer 全流程所需依赖（CUDA 12.x 环境）
+#  用法:
+#    conda create -n dl_env python=3.10 -y
+#    conda activate dl_env
+#    pip install -r requirements_transformer.txt
+# ============================================================
+
+# ---- 核心深度学习 ----
+torch>=2.5.0
+torchaudio>=2.5.0
+torchvision>=0.20.0
+
+# ---- 数据处理 ----
+numpy>=1.26.0
+pandas>=2.1.0
+pyarrow>=14.0.0
+
+# ---- 配置与工具 ----
+pyyaml>=6.0
+tqdm>=4.66.0
+
+# ---- 科学计算 ----
+scipy>=1.12.0
+scikit-learn>=1.4.0
+
+# ---- 组合优化 (CVXPY + 求解器) ----
+cvxpy>=1.4.0
