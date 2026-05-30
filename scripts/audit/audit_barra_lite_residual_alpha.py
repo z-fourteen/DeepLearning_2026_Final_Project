@@ -58,7 +58,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run Barra-lite residual alpha audit.")
     parser.add_argument(
         "--predictions",
-        default="outputs/runs/gru_l20_clean_alpha_resid_style_strictmask_leaky0005/predictions.parquet",
+        default="outputs/runs/gru_l20_clean_alpha_resid_style_purgedwf_strictmask_leaky0005/predictions.parquet",
     )
     parser.add_argument("--mart", default="data/mart/datasets/dataset_v20260526.parquet")
     parser.add_argument("--labels", default="data/mart/labels/labels_canonical_v20260526.parquet")

@@ -43,7 +43,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run T+1 fill simulation backtest.")
     parser.add_argument(
         "--predictions",
-        default="outputs/runs/gru_l20_clean_alpha_resid_style_strictmask_leaky0005/predictions.parquet",
+        default="outputs/runs/gru_l20_clean_alpha_resid_style_purgedwf_strictmask_leaky0005/predictions.parquet",
     )
     parser.add_argument(
         "--execution-labels",

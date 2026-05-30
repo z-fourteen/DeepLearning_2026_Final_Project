@@ -1,10 +1,10 @@
 run:
-  name: "gru_l20_clean_alpha_only_strictmask_leaky0005"
-  output_dir: "outputs/runs/gru_l20_clean_alpha_only_strictmask_leaky0005"
+  name: "gru_l20_clean_alpha_only_purgedwf_strictmask_leaky0005"
+  output_dir: "outputs/runs/gru_l20_clean_alpha_only_purgedwf_strictmask_leaky0005"
   seed: 42
 
 data:
-  npz_path: "data/mart/datasets/dataset_seq_l20_adv_clean_v1_alpha_only_chinext_2016_2026.npz"
+  npz_path: "data/mart/datasets/dataset_seq_l20_adv_clean_v1_alpha_only_chinext_purged_walk_forward.npz"
   train_split: "train"
   validation_split: "validation"
   test_split: "test"

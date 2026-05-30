@@ -16,3 +16,7 @@ python scripts/modeling/train_sequence.py --config configs/models/gru_l20_clean_
 
 The clean alpha-only model is the pure 13-alpha benchmark. The residual-style
 variant is kept as a controlled research extension.
+
+Both configs consume the regenerated `chinext_purged_walk_forward` clean tensors
+and write to `purgedwf` run directories, keeping them separate from archived
+single-holdout runs.

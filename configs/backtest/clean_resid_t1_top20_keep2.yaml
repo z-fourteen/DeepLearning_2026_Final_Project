@@ -3,12 +3,12 @@ mainline:
   description: Clean alpha-plus-residual-style GRU signal with strict-mask dataset and T+1 open-fill Top20 keep2x execution.
 
 inputs:
-  predictions: outputs/runs/gru_l20_clean_alpha_resid_style_strictmask_leaky0005/predictions.parquet
-  model_config: outputs/runs/gru_l20_clean_alpha_resid_style_strictmask_leaky0005/config.yaml
-  dataset_manifest: data/mart/datasets/dataset_seq_l20_adv_clean_v1_alpha_resid_style_chinext_2016_2026_manifest.json
+  predictions: outputs/runs/gru_l20_clean_alpha_resid_style_purgedwf_strictmask_leaky0005/predictions.parquet
+  model_config: outputs/runs/gru_l20_clean_alpha_resid_style_purgedwf_strictmask_leaky0005/config.yaml
+  dataset_manifest: data/mart/datasets/dataset_seq_l20_adv_clean_v1_alpha_resid_style_chinext_purged_walk_forward_manifest.json
   mart: data/mart/datasets/dataset_v20260526.parquet
   execution_labels: data/mart/labels/execution_labels_v20260526.parquet
-  clean_alpha_only_predictions: outputs/runs/gru_l20_clean_alpha_only_strictmask_leaky0005/predictions.parquet
+  clean_alpha_only_predictions: outputs/runs/gru_l20_clean_alpha_only_purgedwf_strictmask_leaky0005/predictions.parquet
 
 execution:
   k: 20

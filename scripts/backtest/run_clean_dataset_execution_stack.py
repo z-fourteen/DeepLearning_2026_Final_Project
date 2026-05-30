@@ -16,12 +16,12 @@ RUNS = {
     "clean_alpha_only": PROJECT_ROOT
     / "outputs"
     / "runs"
-    / "gru_l20_clean_alpha_only_strictmask_leaky0005"
+    / "gru_l20_clean_alpha_only_purgedwf_strictmask_leaky0005"
     / "predictions.parquet",
     "clean_alpha_resid_style": PROJECT_ROOT
     / "outputs"
     / "runs"
-    / "gru_l20_clean_alpha_resid_style_strictmask_leaky0005"
+    / "gru_l20_clean_alpha_resid_style_purgedwf_strictmask_leaky0005"
     / "predictions.parquet",
 }
 

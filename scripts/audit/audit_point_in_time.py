@@ -47,7 +47,7 @@ def parse_args() -> argparse.Namespace:
         "--filter-log",
         default=(
             "data/mart/datasets/"
-            "dataset_seq_l20_adv_clean_v1_alpha_only_chinext_2016_2026_filter_log.csv"
+            "dataset_seq_l20_adv_clean_v1_alpha_only_chinext_purged_walk_forward_filter_log.csv"
         ),
         help="Strict tradable mask filter log.",
     )
