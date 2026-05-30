@@ -132,7 +132,7 @@ def scan_negative_shifts(path: Path) -> list[dict[str, Any]]:
 def audit_configs(root: Path, args: argparse.Namespace, findings: list[Finding]) -> None:
     features_config_path = root / args.features_config
     clean_config_path = root / args.clean_config
-    labels_config_path = root / "configs" / "labels.yaml"
+    labels_config_path = root / "configs" / "data" / "labels.yaml"
 
     features_config = load_yaml(features_config_path)
     clean_config = load_yaml(clean_config_path)
@@ -210,11 +210,10 @@ def audit_configs(root: Path, args: argparse.Namespace, findings: list[Finding])
 def audit_static_code(root: Path, findings: list[Finding]) -> pd.DataFrame:
     code_paths = [
         root / "pipelines" / "mart" / "agent.py",
-        root / "pipelines" / "mart" / "dataset.py",
         root / "pipelines" / "mart" / "clean_dataset.py",
-        root / "scripts" / "backtest_topk.py",
-        root / "scripts" / "backtest_topk_turnover_control.py",
-        root / "scripts" / "build_strictmask_prediction_overlay.py",
+        root / "scripts" / "backtest" / "backtest_t1_fill_sim.py",
+        root / "scripts" / "backtest" / "run_clean_dataset_execution_stack.py",
+        root / "scripts" / "modeling" / "build_clean_model_datasets.py",
     ]
     rows: list[dict[str, Any]] = []
     for path in code_paths:
