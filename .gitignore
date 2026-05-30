@@ -50,12 +50,23 @@ data/lake/raw/**/*.parquet
 data/lake/core/**/*.parquet
 data/lake/state/**/*.parquet
 data/mart/**/*.parquet
+data/mart/datasets/*.npz
+data/mart/datasets/*_filter_log.csv
+!data/mart/datasets/*manifest*.json
 data/cache/**/*.parquet
 meta/file_registry.parquet
 meta/data_versions.parquet
 meta/pool_registry.parquet
 logs/audit/*.json
-outputs/factor_validation/
+outputs/**
+!outputs/
+!outputs/.gitkeep
+!outputs/**/
+!outputs/**/manifest.json
+!outputs/**/*_manifest.json
+!outputs/**/*findings.md
+!outputs/**/leakage_findings.md
+!outputs/**/suspect_features.txt
 outputs/runs/
 
 # AI-generated session notes
