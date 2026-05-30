@@ -64,3 +64,5 @@ legacy/legacy_full62_v1/                           # read-only historical full62
 ```
 
 Start with `docs/00_project_overview.md` for the review narrative.
+Use `docs/03a_new_model_clean_dataset_onboarding.md` when wiring a new model
+into the clean tensors.

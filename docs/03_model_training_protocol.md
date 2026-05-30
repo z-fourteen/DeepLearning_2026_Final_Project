@@ -20,3 +20,10 @@ variant is kept as a controlled research extension.
 Both configs consume the regenerated `chinext_purged_walk_forward` clean tensors
 and write to `purgedwf` run directories, keeping them separate from archived
 single-holdout runs.
+
+For adding a new model, follow the dataset schema, config checklist, prediction
+contract, and smoke tests in:
+
+```text
+docs/03a_new_model_clean_dataset_onboarding.md
+```
