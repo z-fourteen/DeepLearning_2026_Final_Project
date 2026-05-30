@@ -12,7 +12,7 @@ from src.models.base import BaseStockModel, FeatureProjection, PredictionHead
 class GRUStockModel(BaseStockModel):
     """GRU baseline for stock sequence prediction."""
 
-    def __init__(self, num_features: int = 62, config: Mapping[str, Any] | None = None):
+    def __init__(self, num_features: int = 13, config: Mapping[str, Any] | None = None):
         super().__init__(num_features=num_features, config=config)
 
         d_model = int(self.config_value("d_model", 64))

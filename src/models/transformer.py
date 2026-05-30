@@ -118,6 +118,16 @@ class TransformerStockModel(BaseStockModel):
           -> Pooling (cls|last_step|attention)       [B, 64]
           -> PredictionHead(GELU)  [B]
 
+    Feature set: advanced_sequence_clean_v1 (13 alpha features)
+      - lag1_net_mf_strength_{20d,60d}_mean   — 资金流强度(中/长期)
+      - lag1_close_position                    — 收盘价相对位置
+      - lag1_excess_ret_{10d,1d,5d}_mean       — 超额收益(多周期)
+      - lag1_industry_neutral_ret_1d           — 行业中性收益
+      - lag1_ret_{1d,20d,5d_mean}              — 原始收益(多周期)
+      - lag1_bollinger_z_20d                   — 布林带标准化
+      - lag1_ma_ratio_20_60                    — 均线比率
+      - lag1_macd_hist                         — MACD柱
+
     Config keys:
         d_model, input_dropout,
         num_encoder_layers, num_heads, dim_feedforward,
@@ -132,7 +142,7 @@ class TransformerStockModel(BaseStockModel):
     _VALID_ACTIVATIONS = {"relu", "gelu"}
     _VALID_POOLING = {"cls", "last_step", "attention"}
 
-    def __init__(self, num_features: int = 62, config: Mapping[str, Any] | None = None):
+    def __init__(self, num_features: int = 13, config: Mapping[str, Any] | None = None):
         super().__init__(num_features=num_features, config=config)
 
         d_model = int(self.config_value("d_model", 64))

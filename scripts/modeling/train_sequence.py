@@ -21,7 +21,7 @@ import torch
 import yaml
 from torch.utils.data import DataLoader
 
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from src.data import DateBatchSampler, SequenceNPZDataset  # noqa: E402

@@ -92,7 +92,7 @@ class PredictionHead(nn.Module):
 class BaseStockModel(nn.Module, ABC):
     """Base interface for sequence stock prediction models."""
 
-    def __init__(self, num_features: int = 62, config: Mapping[str, Any] | None = None):
+    def __init__(self, num_features: int = 13, config: Mapping[str, Any] | None = None):
         super().__init__()
         if num_features <= 0:
             raise ValueError(f"num_features must be positive, got {num_features}")
