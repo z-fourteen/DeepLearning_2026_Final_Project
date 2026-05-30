@@ -1,0 +1,13 @@
+{
+  "output_dir": "D:\\05_fourteen\\ustc-life\\2026spring\\DL\\Final_Project\\outputs\\backtest\\clean_dataset_execution_stack_purgedwf_alpha_only",
+  "runs": {
+    "clean_alpha_only": {
+      "predictions": "D:\\05_fourteen\\ustc-life\\2026spring\\DL\\Final_Project\\outputs\\runs\\gru_l20_clean_alpha_only_purgedwf_strictmask_leaky0005\\predictions.parquet",
+      "t1_fill_dir": "D:\\05_fourteen\\ustc-life\\2026spring\\DL\\Final_Project\\outputs\\backtest\\clean_dataset_execution_stack_purgedwf_alpha_only\\clean_alpha_only\\t1_fill",
+      "optimizer_dir": ""
+    }
+  },
+  "summary": "D:\\05_fourteen\\ustc-life\\2026spring\\DL\\Final_Project\\outputs\\backtest\\clean_dataset_execution_stack_purgedwf_alpha_only\\summary.csv",
+  "method": "clean_dataset_strictmask_t1_fill_optional_optimizer",
+  "optimizer_script": ""
+}
