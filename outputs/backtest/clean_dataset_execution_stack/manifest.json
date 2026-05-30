@@ -1,0 +1,17 @@
+{
+  "output_dir": "D:\\05_fourteen\\ustc-life\\2026spring\\DL\\Final_Project\\outputs\\backtest\\clean_dataset_execution_stack",
+  "runs": {
+    "clean_alpha_only": {
+      "predictions": "D:\\05_fourteen\\ustc-life\\2026spring\\DL\\Final_Project\\outputs\\runs\\gru_l20_clean_alpha_only_strictmask_leaky0005\\predictions.parquet",
+      "t1_fill_dir": "D:\\05_fourteen\\ustc-life\\2026spring\\DL\\Final_Project\\outputs\\backtest\\clean_dataset_execution_stack\\clean_alpha_only\\t1_fill",
+      "optimizer_dir": "D:\\05_fourteen\\ustc-life\\2026spring\\DL\\Final_Project\\outputs\\backtest\\clean_dataset_execution_stack\\clean_alpha_only\\optimizer"
+    },
+    "clean_alpha_resid_style": {
+      "predictions": "D:\\05_fourteen\\ustc-life\\2026spring\\DL\\Final_Project\\outputs\\runs\\gru_l20_clean_alpha_resid_style_strictmask_leaky0005\\predictions.parquet",
+      "t1_fill_dir": "D:\\05_fourteen\\ustc-life\\2026spring\\DL\\Final_Project\\outputs\\backtest\\clean_dataset_execution_stack\\clean_alpha_resid_style\\t1_fill",
+      "optimizer_dir": "D:\\05_fourteen\\ustc-life\\2026spring\\DL\\Final_Project\\outputs\\backtest\\clean_dataset_execution_stack\\clean_alpha_resid_style\\optimizer"
+    }
+  },
+  "summary": "D:\\05_fourteen\\ustc-life\\2026spring\\DL\\Final_Project\\outputs\\backtest\\clean_dataset_execution_stack\\summary.csv",
+  "method": "clean_dataset_strictmask_t1_fill_and_execution_label_optimizer"
+}

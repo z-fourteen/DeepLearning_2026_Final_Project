@@ -1,0 +1,26 @@
+{
+  "predictions": "D:\\05_fourteen\\ustc-life\\2026spring\\DL\\Final_Project\\outputs\\runs\\gru_l20_clean_alpha_resid_style_strictmask_leaky0005\\predictions.parquet",
+  "mart": "data/mart/datasets/dataset_v20260526.parquet",
+  "labels": "data/mart/labels/execution_labels_v20260526.parquet",
+  "output_dir": "D:\\05_fourteen\\ustc-life\\2026spring\\DL\\Final_Project\\outputs\\backtest\\clean_dataset_execution_stack_smoke\\clean_alpha_resid_style\\optimizer",
+  "risk_control": [
+    "none",
+    "industry_size"
+  ],
+  "k": [
+    20
+  ],
+  "style_penalty": [
+    0.0,
+    0.1
+  ],
+  "turnover_penalty": [
+    0.0,
+    0.02
+  ],
+  "portfolio_nav": 10000000.0,
+  "participation_cap": 0.03,
+  "period_rows": 1304,
+  "summary_rows": 16,
+  "method": "barra_lite_constrained_reranker_with_t1_fill_simulation"
+}
