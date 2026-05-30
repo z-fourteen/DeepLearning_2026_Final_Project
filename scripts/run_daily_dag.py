@@ -34,21 +34,21 @@ def main() -> None:
     args = parse_args()
     results: list[dict] = []
     if not args.skip_ingest:
-        results.append(run_step("ingest_raw", ["scripts/run_ingest_raw.py", "--data-version", args.data_version]))
+        results.append(run_step("ingest_raw", ["scripts/data/run_ingest_raw.py", "--data-version", args.data_version]))
     if not args.skip_pool:
-        results.append(run_step("build_pool", ["scripts/run_build_pool.py", "--data-version", args.data_version]))
+        results.append(run_step("build_pool", ["scripts/data/run_build_pool.py", "--data-version", args.data_version]))
     if not args.skip_state_build:
         results.append(
             run_step(
                 "build_market_state",
-                ["scripts/run_build_market_state.py", "--data-version", args.data_version, "--incremental"],
+                ["scripts/data/run_build_market_state.py", "--data-version", args.data_version, "--incremental"],
             )
         )
     results.append(
         run_step(
             "validate_market_state_coverage",
             [
-                "scripts/validate_market_state_coverage.py",
+                "scripts/data/validate_market_state_coverage.py",
                 "--data-version",
                 args.data_version,
                 "--start-date",
@@ -64,7 +64,7 @@ def main() -> None:
             run_step(
                 "build_mart",
                 [
-                    "scripts/run_build_mart.py",
+                    "scripts/data/run_build_mart.py",
                     "--data-version",
                     args.data_version,
                     "--start-date",

@@ -380,7 +380,7 @@ def run_pool_agent(
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Build the canonical SCD2 stock pool.")
-    parser.add_argument("--config", default="configs/data.yaml")
+    parser.add_argument("--config", default="configs/data/data.yaml")
     parser.add_argument("--project-root", default=".")
     parser.add_argument("--data-version", required=True)
     parser.add_argument("--index-code")

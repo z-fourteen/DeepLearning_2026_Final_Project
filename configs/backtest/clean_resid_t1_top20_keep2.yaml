@@ -1,0 +1,32 @@
+mainline:
+  name: clean_resid_t1_top20_keep2
+  description: Clean alpha-plus-residual-style GRU signal with strict-mask dataset and T+1 open-fill Top20 keep2x execution.
+
+inputs:
+  predictions: outputs/runs/gru_l20_clean_alpha_resid_style_strictmask_leaky0005/predictions.parquet
+  model_config: outputs/runs/gru_l20_clean_alpha_resid_style_strictmask_leaky0005/config.yaml
+  dataset_manifest: data/mart/datasets/dataset_seq_l20_adv_clean_v1_alpha_resid_style_chinext_2016_2026_manifest.json
+  mart: data/mart/datasets/dataset_v20260526.parquet
+  execution_labels: data/mart/labels/execution_labels_v20260526.parquet
+  clean_alpha_only_predictions: outputs/runs/gru_l20_clean_alpha_only_strictmask_leaky0005/predictions.parquet
+
+execution:
+  k: 20
+  keep_multiplier: 2.0
+  cost_bps: 10.0
+  slippage_bps: 5.0
+  portfolio_nav: 10000000.0
+  participation_cap: 0.03
+  rebalance_stride: 5
+  min_daily_count: 20
+
+sensitivity:
+  k_values: [15, 20, 25]
+  keep_multipliers: [1.5, 2.0, 2.5, 3.0]
+  cost_bps_values: [5.0, 10.0, 20.0, 30.0]
+  portfolio_nav_values: [1000000.0, 5000000.0, 10000000.0, 30000000.0, 50000000.0]
+  participation_cap_values: [0.01, 0.03, 0.05]
+
+outputs:
+  backtest_dir: outputs/backtest/clean_resid_t1_top20_keep2_mainline
+  audit_dir: outputs/audit/clean_resid_t1_top20_keep2

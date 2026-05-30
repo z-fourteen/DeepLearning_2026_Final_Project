@@ -207,7 +207,7 @@ feature_sets:
     source: "feature_engineering_20260529_alpha_pruned"
     include_prefixes: ["lag1_"]
     sequence_windows: [20, 60]
-    role_config: "configs/feature_sets/advanced_sequence_clean_v1.yaml"
+    role_config: "configs/features/advanced_sequence_clean_v1.yaml"
     selected_features:
       - lag1_net_mf_strength_20d_mean
       - lag1_net_mf_strength_60d_mean

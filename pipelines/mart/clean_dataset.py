@@ -493,7 +493,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Build clean model datasets from role-aware feature configs.")
     parser.add_argument("--project-root", default=".")
     parser.add_argument("--data-version", required=True)
-    parser.add_argument("--clean-config", default="configs/feature_sets/advanced_sequence_clean_v1.yaml")
+    parser.add_argument("--clean-config", default="configs/features/advanced_sequence_clean_v1.yaml")
     parser.add_argument("--build-mode", choices=sorted(BUILD_MODES), default="alpha_only")
     parser.add_argument("--label-column", default="label_rel_return")
     parser.add_argument("--split-name")

@@ -1456,7 +1456,7 @@ def run_factor_validation(
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run factor IC, RankIC, quantile and quality validation for mart data.")
     parser.add_argument("--project-root", default=".")
-    parser.add_argument("--config", default="configs/data.yaml")
+    parser.add_argument("--config", default="configs/data/data.yaml")
     parser.add_argument("--data-version", required=True)
     parser.add_argument("--label-column", default="label_rel_return")
     parser.add_argument("--quantiles", type=int, default=5)

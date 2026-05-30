@@ -1,4 +1,0 @@
-benchmark: "399006.SZ"
-rebalance: daily
-top_k: 20
-execution_price: vwap

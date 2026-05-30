@@ -1,0 +1,268 @@
+project:
+  name: incremental_quant_pipeline
+  timezone: Asia/Shanghai
+
+source:
+  root_dir: "A股数据"
+  csv_encoding: "utf-8"
+
+lake:
+  raw_dir: "data/lake/raw"
+  core_dir: "data/lake/core"
+  state_dir: "data/lake/state"
+  audit_dir: "data/lake/audit"
+
+mart:
+  features_dir: "data/mart/features_daily"
+  labels_dir: "data/mart/labels"
+  datasets_dir: "data/mart/datasets"
+
+cache:
+  rolling_features_dir: "data/cache/rolling_features"
+
+meta:
+  file_registry: "meta/file_registry.parquet"
+  data_versions: "meta/data_versions.parquet"
+  schema_registry: "meta/schema_registry.yaml"
+  pool_registry: "meta/pool_registry.parquet"
+
+logs:
+  audit_dir: "logs/audit"
+
+pool:
+  default_index_code: "399006.SZ"
+  output_dir: "data/lake/core/chinext_pool"
+  scd2_file: "chinext_pool_scd2.parquet"
+  columns:
+    ts_code: string
+    index_code: string
+    effective_from: date_yyyymmdd
+    effective_to: date_yyyymmdd
+    index_weight: numeric
+    source_trade_date: date_yyyymmdd
+    name: string
+    industry: string
+    market: string
+    list_date: date_yyyymmdd
+    pool_version: string
+    is_active: boolean
+    created_at: timestamp
+
+state:
+  output_dir: "data/lake/state/security_daily_state.parquet"
+  min_listed_days: 0
+  limit_rules:
+    tick_size: 0.01
+    price_tolerance: 0.000001
+    boards:
+      chinext:
+        code_patterns: ["^30\\d{4}\\.SZ$"]
+        reforms:
+          - effective_from: "19000101"
+            normal_limit_ratio: 0.10
+            st_limit_ratio: 0.05
+            ipo_no_limit_trading_days: 0
+          - effective_from: "20200824"
+            normal_limit_ratio: 0.20
+            st_limit_ratio: 0.20
+            ipo_no_limit_trading_days: 5
+      sz_main:
+        code_patterns: ["^00\\d{4}\\.SZ$"]
+        reforms:
+          - effective_from: "19000101"
+            normal_limit_ratio: 0.10
+            st_limit_ratio: 0.05
+            ipo_no_limit_trading_days: 0
+          - effective_from: "20230410"
+            normal_limit_ratio: 0.10
+            st_limit_ratio: 0.05
+            ipo_no_limit_trading_days: 5
+      sh_main:
+        code_patterns: ["^60\\d{4}\\.SH$"]
+        reforms:
+          - effective_from: "19000101"
+            normal_limit_ratio: 0.10
+            st_limit_ratio: 0.05
+            ipo_no_limit_trading_days: 0
+          - effective_from: "20230410"
+            normal_limit_ratio: 0.10
+            st_limit_ratio: 0.05
+            ipo_no_limit_trading_days: 5
+      star:
+        code_patterns: ["^68\\d{4}\\.SH$"]
+        reforms:
+          - effective_from: "19000101"
+            normal_limit_ratio: 0.20
+            st_limit_ratio: 0.20
+            ipo_no_limit_trading_days: 5
+      unknown:
+        code_patterns: []
+        reforms:
+          - effective_from: "19000101"
+            normal_limit_ratio: 0.10
+            st_limit_ratio: 0.05
+            ipo_no_limit_trading_days: 0
+  columns:
+    trade_date: date_yyyymmdd
+    ts_code: string
+    is_st: boolean
+    is_suspended: boolean
+    is_limit_up: boolean
+    is_limit_down: boolean
+    is_tradable: boolean
+    listed_days: integer
+    listed_trading_days: integer
+    market_board: string
+    has_price_limit: boolean
+    limit_ratio: numeric
+    limit_up_price: numeric
+    limit_down_price: numeric
+    limit_rule_id: string
+    limit_rule_reason: string
+    volume_valid: boolean
+    price_valid: boolean
+    state_version: string
+    created_at: timestamp
+
+ingestion:
+  append_only: true
+  schema_validation:
+    enabled: true
+    strict_columns: false
+    schemas:
+      basic:
+        columns:
+          ts_code: string
+          symbol: string
+          name: string
+          area: string
+          industry: string
+          cnspell: string
+          market: string
+          list_date: date_yyyymmdd
+          act_name: string
+          act_ent_type: string
+      trade_cal:
+        columns:
+          exchange: string
+          cal_date: date_yyyymmdd
+          is_open: integer
+          pretrade_date: date_yyyymmdd
+      daily:
+        columns:
+          ts_code: string
+          trade_date: date_yyyymmdd
+          open: numeric
+          high: numeric
+          low: numeric
+          close: numeric
+          pre_close: numeric
+          change: numeric
+          pct_chg: numeric
+          vol: numeric
+          amount: numeric
+          vwap: numeric
+      stock_st:
+        columns:
+          ts_code: string
+          name: string
+          trade_date: date_yyyymmdd
+          type: string
+          type_name: string
+      index_weight:
+        columns:
+          index_code: string
+          con_code: string
+          trade_date: date_yyyymmdd
+          weight: numeric
+      metric:
+        columns:
+          ts_code: string
+          trade_date: date_yyyymmdd
+          close: numeric
+          turnover_rate: numeric
+          turnover_rate_f: numeric
+          volume_ratio: numeric
+          pe: numeric
+          pe_ttm: numeric
+          pb: numeric
+          ps: numeric
+          ps_ttm: numeric
+          dv_ratio: numeric
+          dv_ttm: numeric
+          total_share: numeric
+          float_share: numeric
+          free_share: numeric
+          total_mv: numeric
+          circ_mv: numeric
+      moneyflow:
+        columns:
+          ts_code: string
+          trade_date: date_yyyymmdd
+          buy_sm_vol: numeric
+          buy_sm_amount: numeric
+          sell_sm_vol: numeric
+          sell_sm_amount: numeric
+          buy_md_vol: numeric
+          buy_md_amount: numeric
+          sell_md_vol: numeric
+          sell_md_amount: numeric
+          buy_lg_vol: numeric
+          buy_lg_amount: numeric
+          sell_lg_vol: numeric
+          sell_lg_amount: numeric
+          buy_elg_vol: numeric
+          buy_elg_amount: numeric
+          sell_elg_vol: numeric
+          sell_elg_amount: numeric
+          net_mf_vol: numeric
+          net_mf_amount: numeric
+      market:
+        columns:
+          ts_code: string
+          trade_date: date_yyyymmdd
+          close: numeric
+          open: numeric
+          high: numeric
+          low: numeric
+          pre_close: numeric
+          change: numeric
+          pct_chg: numeric
+          vol: numeric
+          amount: numeric
+  datasets:
+    basic:
+      path: "basic.csv"
+      layout: single_file
+      date_from: none
+    trade_cal:
+      path: "trade_cal.csv"
+      layout: single_file
+      date_from: column
+      date_column: cal_date
+    daily:
+      path: "daily"
+      layout: dated_files
+      date_from: filename
+    stock_st:
+      path: "stock_st"
+      layout: dated_files
+      date_from: filename
+    index_weight:
+      path: "index_weight"
+      layout: monthly_index_files
+      date_from: column
+      date_column: trade_date
+    metric:
+      path: "metric"
+      layout: dated_files
+      date_from: filename
+    moneyflow:
+      path: "moneyflow"
+      layout: dated_files
+      date_from: filename
+    market:
+      path: "market"
+      layout: symbol_files
+      date_from: column
+      date_column: trade_date

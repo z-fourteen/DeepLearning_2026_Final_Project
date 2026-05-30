@@ -531,9 +531,9 @@ def run_mart_agent(
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Build research data mart assets.")
     parser.add_argument("--project-root", default=".")
-    parser.add_argument("--config", default="configs/data.yaml")
+    parser.add_argument("--config", default="configs/data/data.yaml")
     parser.add_argument("--features-config", default="configs/features.yaml")
-    parser.add_argument("--labels-config", default="configs/labels.yaml")
+    parser.add_argument("--labels-config", default="configs/data/labels.yaml")
     parser.add_argument("--data-version", required=True)
     parser.add_argument("--start-date", required=True)
     parser.add_argument("--end-date", required=True)

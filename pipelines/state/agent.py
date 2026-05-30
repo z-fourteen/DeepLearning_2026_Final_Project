@@ -511,7 +511,7 @@ def run_market_state(
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Build the market security daily state layer.")
-    parser.add_argument("--config", default="configs/data.yaml", help="Path to the data config YAML.")
+    parser.add_argument("--config", default="configs/data/data.yaml", help="Path to the data config YAML.")
     parser.add_argument("--project-root", default=".", help="Project root directory.")
     parser.add_argument("--data-version", required=True, help="State version, for example v20260526.")
     parser.add_argument("--incremental", action="store_true", help="Build only missing or raw-newer trade_date partitions.")
