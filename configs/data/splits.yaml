@@ -1,0 +1,83 @@
+default_split: chinext_purged_walk_forward_v1
+
+split_policy:
+  scheme: purged_walk_forward
+  label_horizon_days: 5
+  purge_days: 5
+  embargo_days: 20
+  date_format: "%Y%m%d"
+  selection_rule: "Use validation folds for model selection; keep the final test window locked."
+
+splits:
+  chinext_purged_walk_forward_v1:
+    scheme: purged_walk_forward
+    active_fold: final_2025_2026
+    folds:
+      wf_2021:
+        train:
+          start_date: "20160104"
+          end_date: "20191231"
+        validation:
+          start_date: "20200203"
+          end_date: "20201231"
+        test:
+          start_date: "20210201"
+          end_date: "20211231"
+        purge_ranges:
+          - start_date: "20200101"
+            end_date: "20200202"
+            reason: train_validation_purge_embargo
+          - start_date: "20210101"
+            end_date: "20210131"
+            reason: validation_test_purge_embargo
+      wf_2022:
+        train:
+          start_date: "20160104"
+          end_date: "20201231"
+        validation:
+          start_date: "20210201"
+          end_date: "20211231"
+        test:
+          start_date: "20220201"
+          end_date: "20221231"
+        purge_ranges:
+          - start_date: "20210101"
+            end_date: "20210131"
+            reason: train_validation_purge_embargo
+          - start_date: "20220101"
+            end_date: "20220131"
+            reason: validation_test_purge_embargo
+      wf_2023_2024:
+        train:
+          start_date: "20160104"
+          end_date: "20211231"
+        validation:
+          start_date: "20220201"
+          end_date: "20221231"
+        test:
+          start_date: "20230201"
+          end_date: "20241231"
+        purge_ranges:
+          - start_date: "20220101"
+            end_date: "20220131"
+            reason: train_validation_purge_embargo
+          - start_date: "20230101"
+            end_date: "20230131"
+            reason: validation_test_purge_embargo
+      final_2025_2026:
+        train:
+          start_date: "20160104"
+          end_date: "20221231"
+        validation:
+          start_date: "20230201"
+          end_date: "20241231"
+        test:
+          start_date: "20250201"
+          end_date: "20260525"
+        purge_ranges:
+          - start_date: "20230101"
+            end_date: "20230131"
+            reason: train_validation_purge_embargo
+          - start_date: "20250101"
+            end_date: "20250131"
+            reason: validation_test_purge_embargo

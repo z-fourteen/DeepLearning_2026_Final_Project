@@ -1,0 +1,57 @@
+{
+  "predictions": "outputs/runs/gru_l20_clean_alpha_resid_style_purgedwf_strictmask_leaky0005/predictions.parquet",
+  "mart": "data/mart/datasets/core/dataset_v20260526.parquet",
+  "labels": "data/mart/labels/execution_labels_v20260526.parquet",
+  "output_dir": "outputs\\backtest\\soft_optimizer_grid_alpha_resid_style_mininvest_soft",
+  "risk_control": [
+    "industry_proxy"
+  ],
+  "k": [
+    10
+  ],
+  "style_penalty": [
+    0.05,
+    0.1
+  ],
+  "turnover_penalty": [
+    0.02
+  ],
+  "exposure_cap": [
+    0.35
+  ],
+  "min_invested": [
+    0.5,
+    0.8
+  ],
+  "turnover_cap": [
+    1.0
+  ],
+  "participation_cap": [
+    0.03
+  ],
+  "single_name_cap": [
+    0.075,
+    0.1
+  ],
+  "exposure_slack_penalty": [
+    25.0
+  ],
+  "cash_penalty": [
+    0.05
+  ],
+  "min_invested_shortfall_penalty": [
+    5.0,
+    20.0
+  ],
+  "candidate_multiplier": 5.0,
+  "portfolio_nav": 10000000.0,
+  "cost_bps": 10.0,
+  "slippage_bps": 5.0,
+  "rebalance_stride": 5,
+  "min_daily_count": 40,
+  "solver": "CLARABEL",
+  "grid_runs": 16,
+  "period_rows": 2512,
+  "summary_rows": 32,
+  "method": "soft_exposure_slack_optimizer_grid"
+}

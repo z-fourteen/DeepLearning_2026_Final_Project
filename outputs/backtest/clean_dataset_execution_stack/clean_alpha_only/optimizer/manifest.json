@@ -1,0 +1,32 @@
+{
+  "predictions": "D:\\05_fourteen\\ustc-life\\2026spring\\DL\\Final_Project\\outputs\\runs\\gru_l20_clean_alpha_only_strictmask_leaky0005\\predictions.parquet",
+  "mart": "data/mart/datasets/dataset_v20260526.parquet",
+  "labels": "data/mart/labels/execution_labels_v20260526.parquet",
+  "output_dir": "D:\\05_fourteen\\ustc-life\\2026spring\\DL\\Final_Project\\outputs\\backtest\\clean_dataset_execution_stack\\clean_alpha_only\\optimizer",
+  "risk_control": [
+    "none",
+    "industry_proxy",
+    "industry_size",
+    "industry_size_liquidity_vol_mom"
+  ],
+  "k": [
+    10,
+    20,
+    30
+  ],
+  "style_penalty": [
+    0.0,
+    0.05,
+    0.1,
+    0.2
+  ],
+  "turnover_penalty": [
+    0.0,
+    0.02
+  ],
+  "portfolio_nav": 10000000.0,
+  "participation_cap": 0.03,
+  "period_rows": 15648,
+  "summary_rows": 192,
+  "method": "barra_lite_constrained_reranker_with_t1_fill_simulation"
+}

@@ -50,12 +50,34 @@ data/lake/raw/**/*.parquet
 data/lake/core/**/*.parquet
 data/lake/state/**/*.parquet
 data/mart/**/*.parquet
+data/mart/datasets/**/*.npz
+data/mart/datasets/**/*_filter_log.csv
+!data/mart/datasets/core/
+!data/mart/datasets/core/dataset_v20260526.parquet
+!data/mart/datasets/clean_purged_wf/
+!data/mart/datasets/clean_purged_wf/*.npz
+!data/mart/datasets/clean_purged_wf/*_sidecar.parquet
+!data/mart/datasets/clean_purged_wf/*_filter_log.csv
+!data/mart/datasets/*manifest*.json
+!data/mart/datasets/**/*manifest*.json
+legacy/legacy_full62_v1/data_manifests/datasets/**/*.npz
+legacy/legacy_full62_v1/data_manifests/datasets/**/*.parquet
+legacy/legacy_full62_v1/data_manifests/datasets/**/*_filter_log.csv
+!legacy/legacy_full62_v1/data_manifests/datasets/**/*manifest*.json
 data/cache/**/*.parquet
 meta/file_registry.parquet
 meta/data_versions.parquet
 meta/pool_registry.parquet
 logs/audit/*.json
-outputs/factor_validation/
+outputs/**
+!outputs/
+!outputs/.gitkeep
+!outputs/**/
+!outputs/**/manifest.json
+!outputs/**/*_manifest.json
+!outputs/**/*findings.md
+!outputs/**/leakage_findings.md
+!outputs/**/suspect_features.txt
 outputs/runs/
 
 # AI-generated session notes

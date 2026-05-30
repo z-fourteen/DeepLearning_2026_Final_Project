@@ -421,7 +421,7 @@ def run_ingestion(
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run the incremental raw data ingestion agent.")
-    parser.add_argument("--config", default="configs/data.yaml", help="Path to the data config YAML.")
+    parser.add_argument("--config", default="configs/data/data.yaml", help="Path to the data config YAML.")
     parser.add_argument("--project-root", default=".", help="Project root directory.")
     parser.add_argument("--dry-run", action="store_true", help="Detect changes without writing raw data or metadata.")
     parser.add_argument("--data-version", help="Explicit global data version, for example v20260526.")

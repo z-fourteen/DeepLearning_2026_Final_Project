@@ -1,0 +1,146 @@
+{
+  "dataset_type": "clean_sequence",
+  "path": "D:\\05_fourteen\\ustc-life\\2026spring\\DL\\Final_Project\\data\\mart\\datasets\\dataset_seq_l20_adv_clean_v1_alpha_only_chinext_2016_2026.npz",
+  "sidecar_path": "D:\\05_fourteen\\ustc-life\\2026spring\\DL\\Final_Project\\data\\mart\\datasets\\dataset_seq_l20_adv_clean_v1_alpha_only_chinext_2016_2026_sidecar.parquet",
+  "filter_log_path": "D:\\05_fourteen\\ustc-life\\2026spring\\DL\\Final_Project\\data\\mart\\datasets\\dataset_seq_l20_adv_clean_v1_alpha_only_chinext_2016_2026_filter_log.csv",
+  "data_version": "v20260526",
+  "split_name": "chinext_2016_2026_v1",
+  "lookback": 20,
+  "feature_set": "advanced_sequence_clean_v1",
+  "dataset_slug": "adv_clean_v1",
+  "build_mode": "alpha_only",
+  "output_stem": "dataset_seq_l20_adv_clean_v1_alpha_only_chinext_2016_2026",
+  "samples": 196138,
+  "model_features": [
+    "lag1_net_mf_strength_20d_mean",
+    "lag1_net_mf_strength_60d_mean",
+    "lag1_close_position",
+    "lag1_excess_ret_10d_mean",
+    "lag1_excess_ret_1d",
+    "lag1_excess_ret_5d_mean",
+    "lag1_industry_neutral_ret_1d",
+    "lag1_ret_1d",
+    "lag1_ret_20d",
+    "lag1_ret_5d_mean",
+    "lag1_bollinger_z_20d",
+    "lag1_ma_ratio_20_60",
+    "lag1_macd_hist"
+  ],
+  "model_feature_count": 13,
+  "risk_controls": [
+    "lag1_amplitude",
+    "lag1_beta_20d",
+    "lag1_beta_60d",
+    "lag1_industry_pb_rank",
+    "lag1_pb_winsor",
+    "lag1_pe_ttm_winsor",
+    "lag1_ps_ttm_winsor",
+    "lag1_ret_20d_std",
+    "lag1_ret_60d_std",
+    "lag1_vol_log",
+    "lag1_industry_mv_rank",
+    "lag1_log_circ_mv",
+    "lag1_log_total_mv"
+  ],
+  "tradability_controls": [
+    "lag1_amount_20d_mean",
+    "lag1_amount_5d_mean",
+    "lag1_amount_log",
+    "lag1_amount_rank_pct",
+    "lag1_gap_open",
+    "lag1_industry_amount_rank",
+    "lag1_industry_turnover_rank",
+    "lag1_limit_position",
+    "lag1_limit_touch_down",
+    "lag1_limit_touch_up",
+    "lag1_near_limit_down_2pct",
+    "lag1_near_limit_up_2pct",
+    "lag1_net_mf_amount_to_amount",
+    "lag1_turnover_10d_mean",
+    "lag1_turnover_10d_std",
+    "lag1_turnover_20d_mean",
+    "lag1_turnover_20d_std",
+    "lag1_turnover_5d_mean",
+    "lag1_turnover_60d_mean",
+    "lag1_turnover_60d_std",
+    "lag1_turnover_cost_proxy",
+    "lag1_turnover_rate",
+    "lag1_turnover_rate_f"
+  ],
+  "sidecar_control_count": 36,
+  "strict_tradable_mask": {
+    "enabled": true,
+    "input_rows": 241643,
+    "kept_rows": 211978,
+    "dropped_rows": 29665,
+    "drop_rate": 0.12276374651862458,
+    "reason_counts": {
+      "mask_state_missing": 0,
+      "mask_state_not_tradable": 0,
+      "mask_st": 0,
+      "mask_suspended": 0,
+      "mask_price_invalid": 0,
+      "mask_volume_invalid": 0,
+      "mask_locked_limit": 2023,
+      "mask_low_amount": 20253,
+      "mask_microcap": 12827
+    },
+    "by_split": [
+      {
+        "split": "test",
+        "input_rows": 32437,
+        "kept_rows": 29497,
+        "dropped_rows": 2940,
+        "drop_rate": 0.09063723525603477
+      },
+      {
+        "split": "train",
+        "input_rows": 161578,
+        "kept_rows": 138760,
+        "dropped_rows": 22818,
+        "drop_rate": 0.1412197205065046
+      },
+      {
+        "split": "validation",
+        "input_rows": 47628,
+        "kept_rows": 43721,
+        "dropped_rows": 3907,
+        "drop_rate": 0.08203157806332409
+      }
+    ],
+    "config": {
+      "status": "initial_implemented",
+      "enabled": true,
+      "source": "data/lake/state/security_daily_state.parquet",
+      "policy": "Strict tradable mask is used for sample filtering and execution feasibility. Its columns must not be appended to the model input tensor.\n",
+      "state_filters": {
+        "require_state_match": true,
+        "require_is_tradable": true,
+        "remove_st_or_star_st": true,
+        "remove_suspended": true,
+        "require_price_valid": true,
+        "require_volume_valid": true,
+        "remove_locked_limit_up_or_down_execution_samples": true
+      },
+      "liquidity_filters": {
+        "enabled": true,
+        "amount_column": "lag1_amount_20d_mean",
+        "min_amount": 70000.0,
+        "bottom_quantile_by_date": 0.05
+      },
+      "size_filters": {
+        "enabled": true,
+        "size_column": "lag1_log_circ_mv",
+        "bottom_quantile_by_date": 0.05
+      },
+      "outputs": {
+        "write_filter_log": true
+      }
+    }
+  },
+  "split_counts": {
+    "train": 124527,
+    "validation": 42759,
+    "test": 28852
+  }
+}

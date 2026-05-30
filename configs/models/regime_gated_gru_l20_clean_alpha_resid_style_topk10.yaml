@@ -1,0 +1,66 @@
+run:
+  name: "regime_gated_gru_l20_clean_alpha_resid_style_topk10"
+  output_dir: "outputs/runs/regime_gated_gru_l20_clean_alpha_resid_style_topk10"
+  seed: 42
+
+data:
+  npz_path: "data/mart/datasets/clean_purged_wf/dataset_seq_l20_adv_clean_v1_alpha_resid_style_chinext_purged_walk_forward.npz"
+  train_split: "train"
+  validation_split: "validation"
+  test_split: "test"
+  num_workers: 0
+  pin_memory: true
+
+model:
+  name: "regime_gated_gru"
+  num_features: 18
+  lookback: 20
+  alpha_feature_count: 13
+  d_model: 64
+  style_d_model: 32
+  input_dropout: 0.1
+  style_dropout: 0.1
+  rnn_hidden_dim: 128
+  style_hidden_dim: 64
+  rnn_num_layers: 2
+  rnn_dropout: 0.2
+  head_hidden_dim: 64
+  gate_hidden_dim: 64
+  head_dropout: 0.25
+  head_activation: "leaky_relu"
+  head_negative_slope: 0.005
+  num_regimes: 3
+  regime_dim: 32
+  pos_scale_min: 0.55
+  pos_scale_max: 1.75
+  neg_scale_min: 0.15
+  neg_scale_max: 1.10
+  style_scale_max: 0.30
+  style_gate_init_bias: -2.0
+
+training:
+  device: "auto"
+  batch_size: 512
+  batch_mode: "date"
+  max_epochs: 90
+  optimizer: "adamw"
+  learning_rate: 0.00025
+  weight_decay: 0.00002
+  loss_fn: "topk_margin_ic"
+  topk_loss_k: 10
+  topk_loss_negative_multiplier: 4
+  topk_loss_margin: 0.015
+  topk_loss_temperature: 0.01
+  topk_loss_ic_alpha: 0.15
+  topk_loss_mse_alpha: 0.01
+  ic_loss_eps: 0.000001
+  ic_loss_min_samples: 20
+  max_grad_norm: 1.0
+  scheduler: "cosine"
+  early_stop_metric: "rank_ic_mean"
+  early_stop_patience: 12
+  min_best_daily_ratio: 0.8
+  collapse_stop_patience: 2
+  collapse_stop_statuses:
+    - "prediction_collapse"
+  min_daily_count: 20

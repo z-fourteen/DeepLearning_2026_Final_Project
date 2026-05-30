@@ -1,0 +1,2 @@
+source: "archived from configs/features.yaml during clean_dataset sanitization"
+note: "Historical LightGBM and full advanced_sequence feature pools. Not used by the clean_dataset mainline."

@@ -1,0 +1,191 @@
+name: advanced_sequence_clean_v1
+dataset_slug: adv_clean_v1
+source_feature_set: advanced_sequence_fixed
+status: initial_builder_implemented
+created_from:
+  role_tags: outputs/factor_validation/advanced_sequence_fixed/label_rel_return_q5_cs30_corr0p85_train_all_eval_all_quantile_off_ext_off_neutral_on/feature_role_tags_advanced_sequence_fixed.csv
+  alpha_pruning: outputs/factor_validation/advanced_sequence_fixed/label_rel_return_q5_cs30_corr0p85_train_all_eval_all_quantile_off_ext_off_neutral_on/alpha_collinearity_pruning_proposal.csv
+  neutralization_decay: outputs/factor_validation/advanced_sequence_fixed/label_rel_return_q5_cs30_corr0p85_train_all_eval_all_quantile_off_ext_off_neutral_on/factor_neutralization_decay.csv
+
+model_input_policy:
+  default_tensor: alpha_features
+  do_not_feed_raw_controls: true
+  note: >
+    Risk and tradability controls are separated from raw alpha tensor inputs.
+    They should be used for residualization, filtering, diagnostics, portfolio
+    constraints, or mask construction unless a later ablation explicitly opts in.
+
+alpha_features:
+  - lag1_net_mf_strength_20d_mean
+  - lag1_net_mf_strength_60d_mean
+  - lag1_close_position
+  - lag1_excess_ret_10d_mean
+  - lag1_excess_ret_1d
+  - lag1_excess_ret_5d_mean
+  - lag1_industry_neutral_ret_1d
+  - lag1_ret_1d
+  - lag1_ret_20d
+  - lag1_ret_5d_mean
+  - lag1_bollinger_z_20d
+  - lag1_ma_ratio_20_60
+  - lag1_macd_hist
+
+residualized_style_features:
+  status: initial_candidates_implemented
+  naming: "{feature}__resid_style"
+  neutralize_against:
+    industry:
+      enabled: true
+      column: industry
+    style_exposures:
+      - name: size
+        candidates:
+          - lag1_log_circ_mv
+          - lag1_log_total_mv
+          - lag1_industry_mv_rank
+      - name: liquidity
+        candidates:
+          - lag1_turnover_rate_f
+          - lag1_turnover_rate
+          - lag1_turnover_20d_mean
+          - lag1_turnover_60d_mean
+          - lag1_amount_log
+          - lag1_amount_rank_pct
+      - name: volatility
+        candidates:
+          - lag1_ret_20d_std
+          - lag1_ret_60d_std
+          - lag1_amplitude
+          - lag1_vol_log
+      - name: momentum
+        candidates:
+          - lag1_ret_20d_mean
+          - lag1_ret_60d_mean
+          - lag1_ret_20d
+          - lag1_ret_5d_mean
+          - lag1_ret_5d
+  candidate_families:
+    turnover:
+      raw_controls:
+        - lag1_turnover_rate
+        - lag1_turnover_rate_f
+        - lag1_turnover_cost_proxy
+        - lag1_turnover_5d_mean
+        - lag1_turnover_10d_mean
+        - lag1_turnover_20d_mean
+        - lag1_turnover_60d_mean
+        - lag1_turnover_10d_std
+        - lag1_turnover_20d_std
+        - lag1_turnover_60d_std
+      initial_residual_candidates:
+        - lag1_turnover_cost_proxy
+        - lag1_turnover_20d_std
+        - lag1_turnover_60d_std
+    amount:
+      raw_controls:
+        - lag1_amount_log
+        - lag1_amount_rank_pct
+        - lag1_amount_5d_mean
+        - lag1_amount_20d_mean
+        - lag1_industry_amount_rank
+      initial_residual_candidates:
+        - lag1_amount_rank_pct
+        - lag1_amount_log
+    size:
+      raw_controls:
+        - lag1_log_circ_mv
+        - lag1_log_total_mv
+        - lag1_industry_mv_rank
+      initial_residual_candidates: []
+    volatility:
+      raw_controls:
+        - lag1_ret_20d_std
+        - lag1_ret_60d_std
+        - lag1_amplitude
+        - lag1_vol_log
+      initial_residual_candidates: []
+
+risk_controls:
+  - lag1_amplitude
+  - lag1_beta_20d
+  - lag1_beta_60d
+  - lag1_industry_pb_rank
+  - lag1_pb_winsor
+  - lag1_pe_ttm_winsor
+  - lag1_ps_ttm_winsor
+  - lag1_ret_20d_std
+  - lag1_ret_60d_std
+  - lag1_vol_log
+  - lag1_industry_mv_rank
+  - lag1_log_circ_mv
+  - lag1_log_total_mv
+
+tradability_controls:
+  - lag1_amount_20d_mean
+  - lag1_amount_5d_mean
+  - lag1_amount_log
+  - lag1_amount_rank_pct
+  - lag1_gap_open
+  - lag1_industry_amount_rank
+  - lag1_industry_turnover_rank
+  - lag1_limit_position
+  - lag1_limit_touch_down
+  - lag1_limit_touch_up
+  - lag1_near_limit_down_2pct
+  - lag1_near_limit_up_2pct
+  - lag1_net_mf_amount_to_amount
+  - lag1_turnover_10d_mean
+  - lag1_turnover_10d_std
+  - lag1_turnover_20d_mean
+  - lag1_turnover_20d_std
+  - lag1_turnover_5d_mean
+  - lag1_turnover_60d_mean
+  - lag1_turnover_60d_std
+  - lag1_turnover_cost_proxy
+  - lag1_turnover_rate
+  - lag1_turnover_rate_f
+
+excluded_features:
+  - lag1_month
+  - lag1_weekday
+  - lag1_large_order_imbalance
+  - lag1_main_mf_strength
+  - lag1_net_mf_strength_10d_mean
+  - lag1_net_mf_strength_5d_mean
+  - lag1_excess_ret_20d_mean
+  - lag1_industry_neutral_ret_20d
+  - lag1_ma_ratio_5_20
+  - lag1_macd_diff
+
+strict_tradable_mask:
+  status: initial_implemented
+  enabled: true
+  source: data/lake/state/security_daily_state.parquet
+  policy: >
+    Strict tradable mask is used for sample filtering and execution feasibility.
+    Its columns must not be appended to the model input tensor.
+  state_filters:
+    require_state_match: true
+    require_is_tradable: true
+    remove_st_or_star_st: true
+    remove_suspended: true
+    require_price_valid: true
+    require_volume_valid: true
+    remove_locked_limit_up_or_down_execution_samples: true
+  liquidity_filters:
+    enabled: true
+    amount_column: lag1_amount_20d_mean
+    min_amount: 70000.0
+    bottom_quantile_by_date: 0.05
+  size_filters:
+    enabled: true
+    size_column: lag1_log_circ_mv
+    bottom_quantile_by_date: 0.05
+  outputs:
+    write_filter_log: true
+
+next_steps:
+  - train_alpha_only_clean_dataset
+  - train_alpha_plus_residualized_style_clean_dataset
+  - compare_clean_dataset_ablation
+  - audit_strict_tradable_mask_thresholds
