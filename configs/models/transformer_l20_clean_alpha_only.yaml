@@ -1,0 +1,52 @@
+run:
+  name: "transformer_l20_clean_alpha_only_purgedwf"
+  output_dir: "outputs/runs/transformer_l20_clean_alpha_only_purgedwf"
+  seed: 42
+
+data:
+  npz_path: "data/mart/datasets/clean_purged_wf/dataset_seq_l20_adv_clean_v1_alpha_only_chinext_purged_walk_forward.npz"
+  train_split: "train"
+  validation_split: "validation"
+  test_split: "test"
+  num_workers: 0
+  pin_memory: true
+
+model:
+  name: "transformer_encoder"
+  num_features: 13
+  lookback: 20
+  d_model: 64
+  input_dropout: 0.1
+  num_encoder_layers: 2
+  num_heads: 4
+  dim_feedforward: 128
+  attn_dropout: 0.1
+  ff_dropout: 0.1
+  activation: "gelu"
+  norm_first: true
+  positional_encoding: "sinusoidal"
+  pooling: "cls"
+  cls_max_len: 256
+  head_hidden_dim: 64
+  head_dropout: 0.3
+
+training:
+  device: "auto"
+  batch_size: 256
+  batch_mode: "date"
+  max_epochs: 80
+  optimizer: "adamw"
+  learning_rate: 0.0003
+  weight_decay: 0.001
+  loss_fn: "huber"
+  huber_delta: 1.0
+  max_grad_norm: 1.0
+  scheduler: "warmup_cosine"
+  warmup_ratio: 0.1
+  early_stop_metric: "rank_ic_mean"
+  early_stop_patience: 10
+  min_best_daily_ratio: 0.8
+  collapse_stop_patience: 2
+  collapse_stop_statuses:
+    - "prediction_collapse"
+  min_daily_count: 20

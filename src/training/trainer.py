@@ -10,6 +10,8 @@ import torch
 from torch import nn
 from torch.nn.utils import clip_grad_norm_
 
+from tqdm import tqdm
+
 from src.training.metrics import summarize_daily_ic
 
 
@@ -67,7 +69,8 @@ class Trainer:
         total_loss = 0.0
         total_samples = 0
 
-        for batch in self.train_loader:
+        pbar = tqdm(self.train_loader, desc="Training", leave=False, ncols=100)
+        for batch in pbar:
             x = batch["x"].to(self.device, non_blocking=True)
             y = batch["y"].to(self.device, non_blocking=True).view(-1)
 
@@ -83,6 +86,8 @@ class Trainer:
             total_loss += float(loss.detach().cpu()) * batch_size
             total_samples += batch_size
 
+            pbar.set_postfix({"loss": f"{loss.detach().cpu().item():.4f}"})
+
         return {"train_loss": total_loss / max(total_samples, 1)}
 
     @torch.no_grad()
@@ -94,7 +99,8 @@ class Trainer:
         all_target: list[torch.Tensor] = []
         all_dates: list[str] = []
 
-        for batch in self.val_loader:
+        pbar = tqdm(self.val_loader, desc="Validating", leave=False, ncols=100)
+        for batch in pbar:
             x = batch["x"].to(self.device, non_blocking=True)
             y = batch["y"].to(self.device, non_blocking=True).view(-1)
             pred = self.model(x).view(-1)
@@ -106,6 +112,8 @@ class Trainer:
             all_pred.append(pred.detach().cpu())
             all_target.append(y.detach().cpu())
             all_dates.extend([str(date) for date in batch["trade_date"]])
+
+            pbar.set_postfix({"loss": f"{loss.detach().cpu().item():.4f}"})
 
         pred_tensor = torch.cat(all_pred) if all_pred else torch.empty(0)
         target_tensor = torch.cat(all_target) if all_target else torch.empty(0)
@@ -123,7 +131,9 @@ class Trainer:
         stale_epochs = 0
         collapse_epochs = 0
 
-        for epoch in range(1, max_epochs + 1):
+        epoch_pbar = tqdm(range(1, max_epochs + 1), desc="Epochs", ncols=120)
+
+        for epoch in epoch_pbar:
             train_metrics = self.train_epoch()
             val_metrics = self.validate()
             if self.scheduler is not None:
@@ -170,6 +180,28 @@ class Trainer:
             record["stale_epochs"] = stale_epochs
             record["collapse_epochs"] = collapse_epochs
 
+            # Update epoch progress bar with key metrics
+            ic_mean = record.get("ic_mean", float("nan"))
+            rank_ic_mean = record.get("rank_ic_mean", float("nan"))
+            train_loss = record.get("train_loss", float("nan"))
+            val_loss = record.get("val_loss", float("nan"))
+            best_mark = " ★" if checkpoint_eligible and current == self.best_metric else ""
+            epoch_pbar.set_postfix(
+                {
+                    "tr_loss": f"{train_loss:.4f}",
+                    "va_loss": f"{val_loss:.4f}",
+                    "IC": f"{ic_mean:.4f}",
+                    "RankIC": f"{rank_ic_mean:.4f}",
+                    "best": f"{self.best_epoch}",
+                }
+            )
+
+            print(
+                f"  Epoch {epoch:>3} | tr_loss={train_loss:.6f} va_loss={val_loss:.6f} | "
+                f"IC={ic_mean:+.4f} RankIC={rank_ic_mean:+.4f} ICIR={record.get('icir', float('nan')):.3f}"
+                f" | stale={stale_epochs} collapse={collapse_epochs}{best_mark}"
+            )
+
             if self.collapse_stop_patience > 0 and collapse_epochs >= self.collapse_stop_patience:
                 self.stop_reason = f"collapse_early_stop:{daily_status}"
                 break
@@ -178,6 +210,7 @@ class Trainer:
                 self.stop_reason = f"metric_early_stop:{self.early_stop_metric}"
                 break
 
+        epoch_pbar.close()
         if self.best_state_dict is not None:
             self.model.load_state_dict(self.best_state_dict)
         return self.history
