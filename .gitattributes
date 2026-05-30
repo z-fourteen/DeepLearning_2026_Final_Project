@@ -1,0 +1,4 @@
+data/mart/datasets/core/*.parquet filter=lfs diff=lfs merge=lfs -text
+data/mart/datasets/clean_purged_wf/*.npz filter=lfs diff=lfs merge=lfs -text
+data/mart/datasets/clean_purged_wf/*_sidecar.parquet filter=lfs diff=lfs merge=lfs -text
+data/mart/datasets/clean_purged_wf/*_filter_log.csv filter=lfs diff=lfs merge=lfs -text

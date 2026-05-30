@@ -12,7 +12,15 @@ data/mart/datasets/clean_purged_wf/
 ```
 
 Large tensor, sidecar, and filter-log files are local artifacts. Git tracks only
-the manifest JSON files.
+the active clean artifacts through Git LFS, while legacy artifacts remain
+manifest-only.
+
+After cloning the repository, fetch the clean dataset artifacts with:
+
+```powershell
+git lfs install
+git lfs pull
+```
 
 Each clean tensor is a compressed NPZ with these required keys:
 

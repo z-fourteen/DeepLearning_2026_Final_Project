@@ -52,6 +52,12 @@ data/lake/state/**/*.parquet
 data/mart/**/*.parquet
 data/mart/datasets/**/*.npz
 data/mart/datasets/**/*_filter_log.csv
+!data/mart/datasets/core/
+!data/mart/datasets/core/dataset_v20260526.parquet
+!data/mart/datasets/clean_purged_wf/
+!data/mart/datasets/clean_purged_wf/*.npz
+!data/mart/datasets/clean_purged_wf/*_sidecar.parquet
+!data/mart/datasets/clean_purged_wf/*_filter_log.csv
 !data/mart/datasets/*manifest*.json
 !data/mart/datasets/**/*manifest*.json
 legacy/legacy_full62_v1/data_manifests/datasets/**/*.npz
