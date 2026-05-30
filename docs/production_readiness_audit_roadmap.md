@@ -1068,3 +1068,140 @@ Next required experiment:
 | 2 | Residualized alpha portfolio | Use residualized score from daily cross-sectional regression, not raw score, then apply the same hard caps. |
 | 3 | Walk-forward folds | Repeat residual IC and optimizer evaluation across purged folds, not just the current validation/test split. |
 | 4 | Post-fill holdings attribution | Attribute realized weights after partial fills, not just target or selected names. |
+
+## Hard-Constrained Residual Portfolio Run 2026-05-29
+
+### Residualized Score Construction
+
+Command:
+
+```bash
+conda activate dl_env
+python scripts/build_residualized_predictions.py \
+  --control-set industry_proxy_full_style \
+  --output outputs/runs/gru_l20_mse_ic_leaky_head_slope_0005_resid_industry_proxy_full_style/predictions.parquet
+```
+
+Generated outputs:
+
+```text
+outputs/runs/gru_l20_mse_ic_leaky_head_slope_0005_resid_industry_proxy_full_style/predictions.parquet
+outputs/runs/gru_l20_mse_ic_leaky_head_slope_0005_resid_industry_proxy_full_style/manifest.json
+```
+
+Residualization controls:
+
+```text
+lag1_industry_turnover_rank
+lag1_industry_amount_rank
+lag1_industry_pb_rank
+lag1_industry_mv_rank
+lag1_log_circ_mv
+lag1_log_total_mv
+lag1_amount_log
+lag1_amount_rank_pct
+lag1_turnover_rate_f
+lag1_ret_20d_std
+lag1_ret_20d
+lag1_beta_60d
+lag1_pb_winsor
+```
+
+Output summary:
+
+| Metric | Value |
+| --- | ---: |
+| Rows | 72,218 |
+| Date count | 813 |
+| Score | Daily cross-sectional residualized `pred_score` |
+| Raw score retained | `pred_score_raw` |
+
+### Hard-Constrained Optimizer
+
+Commands:
+
+```bash
+conda activate dl_env
+python scripts/optimize_portfolio_hard_constraints.py \
+  --predictions outputs/runs/gru_l20_mse_ic_leaky_head_slope_0005/predictions.parquet \
+  --output-dir outputs/backtest/optimizer/hard_constraints_raw_full62 \
+  --style-set "industry_proxy,industry_size,full_style" \
+  --exposure-cap "0.15,0.25,0.35,0.50" \
+  --k "10,30" \
+  --portfolio-nav 10000000 \
+  --participation-cap 0.03 \
+  --cost-bps 10 \
+  --slippage-bps 5 \
+  --rebalance-stride 5
+
+python scripts/optimize_portfolio_hard_constraints.py \
+  --predictions outputs/runs/gru_l20_mse_ic_leaky_head_slope_0005_resid_industry_proxy_full_style/predictions.parquet \
+  --output-dir outputs/backtest/optimizer/hard_constraints_resid_full62 \
+  --style-set "industry_proxy,industry_size,full_style" \
+  --exposure-cap "0.15,0.25,0.35,0.50" \
+  --k "10,30" \
+  --portfolio-nav 10000000 \
+  --participation-cap 0.03 \
+  --cost-bps 10 \
+  --slippage-bps 5 \
+  --rebalance-stride 5
+```
+
+Generated outputs:
+
+```text
+outputs/backtest/optimizer/hard_constraints_raw_full62/hard_constraint_periods.csv
+outputs/backtest/optimizer/hard_constraints_raw_full62/hard_constraint_summary.csv
+outputs/backtest/optimizer/hard_constraints_raw_full62/manifest.json
+
+outputs/backtest/optimizer/hard_constraints_resid_full62/hard_constraint_periods.csv
+outputs/backtest/optimizer/hard_constraints_resid_full62/hard_constraint_summary.csv
+outputs/backtest/optimizer/hard_constraints_resid_full62/manifest.json
+```
+
+Method:
+
+- Greedy hard-constrained selector over the top score candidate pool.
+- Checks equal-weight target exposure against same-day universe z-scored style exposures.
+- T+1 canonical execution labels, 10m NAV, 3% participation cap, 10 bps cost plus 5 bps slippage.
+- This is still not a true QP optimizer. It is a hard-constraint diagnostic bridge.
+
+Best rows by split and alpha:
+
+| Alpha | Split | Style set | K | Exposure cap | Net ann. | Excess vs exec universe ann. | Max DD |
+| --- | --- | --- | ---: | ---: | ---: | ---: | ---: |
+| raw | test | full_style | 10 | 0.50 | 0.6701 | 0.1678 | -0.1868 |
+| raw | validation | industry_proxy | 30 | 0.50 | -0.0363 | 0.0517 | -0.4288 |
+| residualized | test | industry_proxy | 30 | 0.25 | 0.6180 | 0.1334 | -0.2059 |
+| residualized | validation | industry_size | 30 | 0.25 | -0.0222 | 0.0654 | -0.3978 |
+
+Top validation rows:
+
+| Alpha | Style set | K | Cap | Net ann. | Excess vs benchmark ann. | Excess vs exec universe ann. | Max DD | Avg max target exposure z | Fallback rate |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| residualized | industry_size | 30 | 0.25 | -0.0222 | -0.0180 | 0.0654 | -0.3978 | 0.1774 | 0.9794 |
+| residualized | industry_proxy | 30 | 0.25 | -0.0273 | -0.0239 | 0.0591 | -0.3940 | 0.1601 | 0.9691 |
+| residualized | industry_proxy | 30 | 0.15 | -0.0282 | -0.0251 | 0.0577 | -0.3909 | 0.1607 | 1.0000 |
+| residualized | industry_size | 30 | 0.15 | -0.0292 | -0.0261 | 0.0566 | -0.3929 | 0.1767 | 1.0000 |
+| raw | industry_proxy | 30 | 0.50 | -0.0363 | -0.0314 | 0.0517 | -0.4288 | 0.2295 | 0.2268 |
+
+Interpretation:
+
+- This is the first portfolio-construction result where validation excess versus executable universe turns positive in a meaningful way.
+- The improvement comes from the combination of residualized score and hard style/industry-size exposure selection, not from raw full62 alone.
+- Absolute validation return is still slightly negative, and max drawdown remains too large for production.
+- The high fallback rate shows that the greedy hard-constraint selector often cannot fill K=30 under strict caps without relaxing the sequential selection path. This is an engineering warning: a proper optimizer should solve the feasible set globally rather than greedily.
+- Test performance declines versus the unconstrained raw K10 result, which is acceptable if validation robustness improves.
+
+PM verdict:
+
+> The project has moved from "proxy alpha fails validation" to "residualized alpha plus hard exposure control may contain a usable research signal." It is still not production-ready, but this is now the most promising branch. The next step is not another GRU ablation; it is a real feasible-set optimizer and walk-forward robustness test.
+
+Next required step:
+
+| Priority | Experiment | Why |
+| ---: | --- | --- |
+| 1 | Replace greedy hard selector with QP or linear constrained optimizer. | Current fallback rate is too high; feasibility should be solved globally. |
+| 2 | Allow underinvestment/cash when hard caps cannot fill K names. | Avoid forced fallback that weakens the meaning of hard constraints. |
+| 3 | Run purged walk-forward folds for residualized score + hard constraints. | Confirm the validation improvement is not one split artifact. |
+| 4 | Attribute post-fill realized holdings. | Verify actual filled weights retain lower style exposure after partial fills. |
