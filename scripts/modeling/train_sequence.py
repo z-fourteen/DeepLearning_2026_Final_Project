@@ -20,8 +20,8 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from src.data import DateBatchSampler, SequenceNPZDataset  # noqa: E402
-from src.models import GRUStockModel  # noqa: E402
-from src.training import MSEICLoss, PearsonICLoss, Trainer, resolve_device  # noqa: E402
+from src.models import GRUStockModel, RegimeGatedGRUStockModel  # noqa: E402
+from src.training import MSEICLoss, PearsonICLoss, TopKMarginICLoss, Trainer, resolve_device  # noqa: E402
 
 
 def load_yaml(path: Path) -> dict[str, Any]:
@@ -59,6 +59,17 @@ def build_loss(config: dict[str, Any]) -> torch.nn.Module:
             alpha=float(config.get("ic_loss_alpha", 0.1)),
             eps=float(config.get("ic_loss_eps", 1e-8)),
             min_samples=int(config.get("ic_loss_min_samples", 2)),
+        )
+    if loss_name in {"topk_margin_ic", "topk_margin"}:
+        return TopKMarginICLoss(
+            k=int(config.get("topk_loss_k", 20)),
+            negative_multiplier=int(config.get("topk_loss_negative_multiplier", 3)),
+            margin=float(config.get("topk_loss_margin", 0.02)),
+            temperature=float(config.get("topk_loss_temperature", 0.01)),
+            ic_alpha=float(config.get("topk_loss_ic_alpha", 0.2)),
+            mse_alpha=float(config.get("topk_loss_mse_alpha", 0.02)),
+            eps=float(config.get("ic_loss_eps", 1e-8)),
+            min_samples=int(config.get("ic_loss_min_samples", 20)),
         )
     raise ValueError(f"Unsupported loss_fn: {loss_name}")
 
@@ -213,15 +224,17 @@ def main() -> None:
     test_loader = build_dataloader(test_dataset, batch_size, False, num_workers, pin_memory, batch_mode, seed)
 
     model_name = str(model_config.get("name", "gru_baseline"))
-    if model_name != "gru_baseline":
-        raise ValueError(f"Unsupported sequence model for this script version: {model_name}")
-
     num_features = int(model_config.get("num_features", train_dataset.num_features))
     if num_features != train_dataset.num_features:
         raise ValueError(
             f"Config num_features={num_features} does not match dataset features={train_dataset.num_features}"
         )
-    model = GRUStockModel(num_features=num_features, config=model_config)
+    if model_name == "gru_baseline":
+        model = GRUStockModel(num_features=num_features, config=model_config)
+    elif model_name == "regime_gated_gru":
+        model = RegimeGatedGRUStockModel(num_features=num_features, config=model_config)
+    else:
+        raise ValueError(f"Unsupported sequence model for this script version: {model_name}")
     optimizer = build_optimizer(model, training_config)
     loss_fn = build_loss(training_config)
     max_epochs = int(args.max_epochs or training_config.get("max_epochs", 80))
