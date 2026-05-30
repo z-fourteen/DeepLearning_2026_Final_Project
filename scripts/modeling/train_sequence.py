@@ -20,7 +20,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from src.data import DateBatchSampler, SequenceNPZDataset  # noqa: E402
-from src.models import GRUStockModel, RegimeGatedGRUStockModel  # noqa: E402
+from src.models import FeatureStyleInteractionGRUStockModel, GRUStockModel, RegimeGatedGRUStockModel  # noqa: E402
 from src.training import MSEICLoss, PearsonICLoss, TopKMarginICLoss, Trainer, resolve_device  # noqa: E402
 
 
@@ -231,6 +231,8 @@ def main() -> None:
         )
     if model_name == "gru_baseline":
         model = GRUStockModel(num_features=num_features, config=model_config)
+    elif model_name == "feature_style_interaction_gru":
+        model = FeatureStyleInteractionGRUStockModel(num_features=num_features, config=model_config)
     elif model_name == "regime_gated_gru":
         model = RegimeGatedGRUStockModel(num_features=num_features, config=model_config)
     else:
