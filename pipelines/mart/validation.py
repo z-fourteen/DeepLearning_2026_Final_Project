@@ -192,7 +192,7 @@ def recommended_features(table: pd.DataFrame, recommendation: str) -> list[str]:
 
 
 def read_dataset(project_root: Path, config: dict[str, Any], data_version: str) -> pd.DataFrame:
-    dataset_path = project_root / config["mart"]["datasets_dir"] / f"dataset_{data_version}.parquet"
+    dataset_path = project_root / config["mart"]["datasets_dir"] / "core" / f"dataset_{data_version}.parquet"
     if not dataset_path.exists():
         raise FileNotFoundError(f"Missing mart dataset: {dataset_path}")
     df = pd.read_parquet(dataset_path)

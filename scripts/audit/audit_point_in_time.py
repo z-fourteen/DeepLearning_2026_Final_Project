@@ -35,7 +35,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--data-version", default="v20260526")
     parser.add_argument(
         "--dataset",
-        default="data/mart/datasets/dataset_v20260526.parquet",
+        default="data/mart/datasets/core/dataset_v20260526.parquet",
         help="Main mart dataset parquet.",
     )
     parser.add_argument(
@@ -47,6 +47,7 @@ def parse_args() -> argparse.Namespace:
         "--filter-log",
         default=(
             "data/mart/datasets/"
+            "clean_purged_wf/"
             "dataset_seq_l20_adv_clean_v1_alpha_only_chinext_purged_walk_forward_filter_log.csv"
         ),
         help="Strict tradable mask filter log.",

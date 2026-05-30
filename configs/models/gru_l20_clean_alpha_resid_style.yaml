@@ -4,7 +4,7 @@ run:
   seed: 42
 
 data:
-  npz_path: "data/mart/datasets/dataset_seq_l20_adv_clean_v1_alpha_resid_style_chinext_purged_walk_forward.npz"
+  npz_path: "data/mart/datasets/clean_purged_wf/dataset_seq_l20_adv_clean_v1_alpha_resid_style_chinext_purged_walk_forward.npz"
   train_split: "train"
   validation_split: "validation"
   test_split: "test"

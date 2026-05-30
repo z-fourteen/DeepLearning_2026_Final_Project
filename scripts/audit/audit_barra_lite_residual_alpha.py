@@ -60,7 +60,7 @@ def parse_args() -> argparse.Namespace:
         "--predictions",
         default="outputs/runs/gru_l20_clean_alpha_resid_style_purgedwf_strictmask_leaky0005/predictions.parquet",
     )
-    parser.add_argument("--mart", default="data/mart/datasets/dataset_v20260526.parquet")
+    parser.add_argument("--mart", default="data/mart/datasets/core/dataset_v20260526.parquet")
     parser.add_argument("--labels", default="data/mart/labels/labels_canonical_v20260526.parquet")
     parser.add_argument("--target", default="execution_excess_open_to_close5")
     parser.add_argument("--out-dir", default="outputs/audit/barra_lite_residual_alpha")

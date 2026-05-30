@@ -32,7 +32,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--output-dir", default="outputs/backtest/clean_dataset_execution_stack")
     parser.add_argument("--execution-labels", default="data/mart/labels/execution_labels_v20260526.parquet")
-    parser.add_argument("--mart", default="data/mart/datasets/dataset_v20260526.parquet")
+    parser.add_argument("--mart", default="data/mart/datasets/core/dataset_v20260526.parquet")
     parser.add_argument("--k", default="10,20,30")
     parser.add_argument("--keep-multiplier", default="1,1.5,2,3")
     parser.add_argument(

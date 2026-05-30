@@ -36,7 +36,7 @@ def unique_list(values: list[str]) -> list[str]:
 
 def read_mart_dataset(project_root: Path, data_version: str) -> pd.DataFrame:
     data_config = load_yaml(project_root / "configs" / "data" / "data.yaml")
-    dataset_path = project_root / data_config["mart"]["datasets_dir"] / f"dataset_{data_version}.parquet"
+    dataset_path = project_root / data_config["mart"]["datasets_dir"] / "core" / f"dataset_{data_version}.parquet"
     if not dataset_path.exists():
         raise FileNotFoundError(f"Missing mart dataset: {dataset_path}")
     df = pd.read_parquet(dataset_path)
@@ -446,7 +446,7 @@ def build_clean_sequence_dataset(
     panel[model_features] = panel[model_features].replace([np.inf, -np.inf], np.nan)
 
     x_array, y_array, sample_index = build_sequence_arrays(panel, model_features, label_column, lookback)
-    output_dir = project_root / data_config["mart"]["datasets_dir"]
+    output_dir = project_root / data_config["mart"]["datasets_dir"] / "clean_purged_wf"
     output_dir.mkdir(parents=True, exist_ok=True)
     name = clean_config.get("name", Path(clean_config_path).stem)
     dataset_slug = clean_config.get("dataset_slug", name)

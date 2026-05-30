@@ -449,14 +449,15 @@ def write_outputs(
     features_dir = project_root / config["mart"]["features_dir"]
     labels_dir = project_root / config["mart"]["labels_dir"]
     datasets_dir = project_root / config["mart"]["datasets_dir"]
-    for directory in [features_dir, labels_dir, datasets_dir]:
+    core_datasets_dir = datasets_dir / "core"
+    for directory in [features_dir, labels_dir, core_datasets_dir]:
         directory.mkdir(parents=True, exist_ok=True)
 
     feature_cols = ["trade_date", "ts_code", *lagged_feature_columns]
     label_cols = ["trade_date", "ts_code", "future_return", "benchmark_future_return", "label_rel_return"]
     feature_path = features_dir / f"features_daily_{data_version}.parquet"
     label_path = labels_dir / f"labels_{data_version}.parquet"
-    dataset_path = datasets_dir / f"dataset_{data_version}.parquet"
+    dataset_path = core_datasets_dir / f"dataset_{data_version}.parquet"
     df[feature_cols].to_parquet(feature_path, index=False)
     df[label_cols].to_parquet(label_path, index=False)
     df[[*feature_cols, "future_return", "benchmark_future_return", "label_rel_return"]].dropna(

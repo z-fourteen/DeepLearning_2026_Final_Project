@@ -50,9 +50,14 @@ data/lake/raw/**/*.parquet
 data/lake/core/**/*.parquet
 data/lake/state/**/*.parquet
 data/mart/**/*.parquet
-data/mart/datasets/*.npz
-data/mart/datasets/*_filter_log.csv
+data/mart/datasets/**/*.npz
+data/mart/datasets/**/*_filter_log.csv
 !data/mart/datasets/*manifest*.json
+!data/mart/datasets/**/*manifest*.json
+legacy/legacy_full62_v1/data_manifests/datasets/**/*.npz
+legacy/legacy_full62_v1/data_manifests/datasets/**/*.parquet
+legacy/legacy_full62_v1/data_manifests/datasets/**/*_filter_log.csv
+!legacy/legacy_full62_v1/data_manifests/datasets/**/*manifest*.json
 data/cache/**/*.parquet
 meta/file_registry.parquet
 meta/data_versions.parquet
