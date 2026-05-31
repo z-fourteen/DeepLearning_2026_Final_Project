@@ -1,4 +1,4 @@
-# clean_dataset v20260526: Universe Specs And Feature Dictionary
+# clean_dataset v20260526：样本域规范与特征字典
 
 本文档是 `clean_dataset` 主线数据资产的内部技术说明，覆盖当前 production tensor、严格可交易样本域、13/18 特征合同，以及信号到 CVXPY 执行优化器的传导机制。所有可复核口径均来自本地落盘资产：
 
@@ -16,25 +16,25 @@ conda run -n dl_env python scripts/modeling/build_clean_model_datasets.py --data
 conda run -n dl_env python scripts/backtest/run_clean_dataset_execution_stack.py --only-existing
 ```
 
-## 1. Universe Specs
+## 1. 样本域规范
 
 ### 1.1 时序切分
 
 当前生产折为 `chinext_purged_walk_forward_v1 / final_2025_2026`。切分采用 purged walk-forward，监督标签 horizon 为 5 个交易日，训练/验证与验证/测试之间分别设置 5 天 purge 与 20 天 embargo，避免标签窗口和调仓信息跨区间泄露。
 
-| Split | Date Span | Tensor Samples | Daily Cross-Sections | Execution Rebalance Dates | Regime Comment |
+| 切分 | 日期区间 | Tensor 样本数 | 日度截面数 | 执行调仓日数 | Regime 说明 |
 | --- | ---: | ---: | ---: | ---: | --- |
 | Train | 20160104-20221231 | 124,527 | 1,650 | - | 模型估计区间，不用于最终模型选择 |
 | Validation | 20230201-20241231 | 41,393 | 468 | 94 | 偏弱/压力 regime；T+1 执行基准在 rebalance grid 上累计约 -19.3% |
 | Test | 20250201-20260525 | 27,288 | 311 | 63 | 锁定 holdout；T+1 执行基准在 rebalance grid 上累计约 +91.2% |
 
-说明：`Daily Cross-Sections` 来自训练日志中的 date-batched evaluation 步数；`Execution Rebalance Dates` 来自执行栈 `rebalance_stride=5` 后的周频调仓日期。因此模型样本域和组合路径域不是同一种行粒度。
+说明：`日度截面数` 来自训练日志中的 date-batched evaluation 步数；`执行调仓日数` 来自执行栈 `rebalance_stride=5` 后的周频调仓日期。因此模型样本域和组合路径域不是同一种行粒度。
 
 ### 1.2 数据截面与落盘行数
 
 模型 tensor 是股票日序列样本：
 
-| Key | Shape / Count | Meaning |
+| Key | 形状 / 数量 | 含义 |
 | --- | ---: | --- |
 | `X` | `[193208, 20, num_features]` | 20 日 lookback 的序列输入 |
 | `y` | `[193208]` | `label_rel_return` 监督目标 |
@@ -45,22 +45,22 @@ conda run -n dl_env python scripts/backtest/run_clean_dataset_execution_stack.py
 
 执行优化器的 `optimizer_periods.csv` 不是股票日样本，而是组合路径行。以 `clean_dataset_execution_stack_purgedwf_both_cash_buffer` 为例，单个模型分支有 15,072 行：
 
-| Dimension | Cardinality | Values |
+| 维度 | 基数 | 取值 |
 | --- | ---: | --- |
-| Rebalance dates | 157 | validation 94 + test 63 |
+| 调仓日期 | 157 | validation 94 + test 63 |
 | `risk_control` | 4 | `none`, `industry_proxy`, `industry_size`, `industry_size_liquidity_vol_mom` |
 | `k` | 3 | 10, 20, 30 |
 | `style_penalty` | 4 | 0, 0.05, 0.10, 0.20 |
 | `turnover_penalty` | 2 | 0, 0.02 |
-| Total rows | 15,072 | `157 * 4 * 3 * 4 * 2` |
+| 总行数 | 15,072 | `157 * 4 * 3 * 4 * 2` |
 
 因此，15,072 行是组合参数路径的 period-level accounting，不是“交易日乘股票数”。每一行代表一个 split、一个 rebalance date、一个风控/惩罚参数组合下的完整组合状态、成交约束、现金权重、交易成本和收益归因。
 
-### 1.3 Purged WF, Strict Mask And Executable Universe
+### 1.3 Purged WF、Strict Mask 与可执行样本域
 
 `purgedwf` 负责时间上的 point-in-time 纯净性；`strictmask` 负责截面上的可交易纯净性；T+1 execution stack 负责成交可达性和容量约束。三者共同定义可进入建模和回测的 **Executable Universe**。
 
-| Layer | Mechanism | Current Production Contract |
+| 层级 | 机制 | 当前生产合同 |
 | --- | --- | --- |
 | Purged WF | 5 日标签 horizon；5 日 purge；20 日 embargo；test 锁定 | 阻断训练、验证、测试之间的标签窗口重叠与调仓信息泄露 |
 | State mask | `require_is_tradable`, remove ST/*ST, remove suspended, require valid price/volume | 停牌、价格/成交量无效、交易状态异常不得进入 tensor |
@@ -71,32 +71,32 @@ conda run -n dl_env python scripts/backtest/run_clean_dataset_execution_stack.py
 
 Strict mask 落盘审计口径：
 
-| Metric | Count / Rate |
+| 指标 | 数量 / 比例 |
 | --- | ---: |
-| Raw candidate rows before strict mask | 238,253 |
-| Rows kept after strict mask | 208,966 |
-| Rows dropped | 29,287 |
-| Drop rate | 12.29% |
-| Locked-limit drops | 2,021 |
-| Low-amount drops | 19,982 |
-| Microcap drops | 12,657 |
+| strict mask 前原始候选行 | 238,253 |
+| strict mask 后保留行 | 208,966 |
+| 剔除行数 | 29,287 |
+| 剔除比例 | 12.29% |
+| 涨跌停锁定剔除 | 2,021 |
+| 低成交额剔除 | 19,982 |
+| 微盘剔除 | 12,657 |
 
 注意：drop reason 可以重叠，因此单项 reason count 之和大于 dropped rows。`participation_cap=0.03` 不进入模型 `X`，而在执行层约束买卖成交容量；这保证模型学习的是信号，不是交易规则本身。
 
-## 2. Feature Matrix Dictionary
+## 2. 特征矩阵字典
 
 当前 `advanced_sequence_clean_v1` 有两套生产 tensor：
 
-| Build Mode | Feature Count | Tensor Path |
+| 构建模式 | 特征数 | Tensor 路径 |
 | --- | ---: | --- |
 | `alpha_only` | 13 | `data/mart/datasets/clean_purged_wf/dataset_seq_l20_adv_clean_v1_alpha_only_chinext_purged_walk_forward.npz` |
 | `alpha_plus_residual_style` | 18 | `data/mart/datasets/clean_purged_wf/dataset_seq_l20_adv_clean_v1_alpha_resid_style_chinext_purged_walk_forward.npz` |
 
-### 2.1 `alpha_only`: Pure But Thin
+### 2.1 `alpha_only`：纯净但较薄
 
-13 个 alpha 输入均为 lag-1 可得的时序/高频/技术类信号，风险控制、交易状态和原始流动性控制不直接喂给模型。其核心物理性质是 **Pure but Thin**：剥离风格切换噪声后，信号更接近 residual alpha；但在弱势市场或快速 regime 切换时，可表达的状态空间较瘦，可能无法充分学习市值、流动性、波动率与行业拥挤度对未来收益的非线性调制。
+13 个 alpha 输入均为 lag-1 可得的时序/高频/技术类信号，风险控制、交易状态和原始流动性控制不直接喂给模型。其核心物理性质是 **纯净但较薄**：剥离风格切换噪声后，信号更接近 residual alpha；但在弱势市场或快速 regime 切换时，可表达的状态空间较瘦，可能无法充分学习市值、流动性、波动率与行业拥挤度对未来收益的非线性调制。
 
-| # | Feature Code | Feature Family | Quant Meaning | Financial Interpretation |
+| # | 特征代码 | 特征族 | 量化含义 | 金融解释 |
 | ---: | --- | --- | --- | --- |
 | 1 | `lag1_net_mf_strength_20d_mean` | Money flow | 20 日净资金强度均值，lag-1 可得 | 中频资金流入/流出压力 |
 | 2 | `lag1_net_mf_strength_60d_mean` | Money flow | 60 日净资金强度均值 | 更慢速的资金偏好和筹码迁移 |
@@ -114,11 +114,11 @@ Strict mask 落盘审计口径：
 
 **组合含义**：这套特征强调 alpha 的点预测纯度。它牺牲了 raw style carry，使模型更不容易把“买小盘、买低流动性、买高波动”误学成 alpha；但当 market regime 本身主要通过这些风格暴露传递时，模型会变得过度保守，后端优化器只能在较少的高置信 alpha 上部署风险预算。
 
-### 2.2 `alpha_resid_style`: Aggressive But Poisonous
+### 2.2 `alpha_resid_style`：进攻性更强但带毒性
 
 18 特征版本 = 13 个 alpha + 5 个 residualized style carry。需要特别说明：当前 manifest 中新增的 5 列不是直接输入 raw Size/Vol/Mom/Industry 暴露，而是从流动性/成交活跃度相关变量中提取、并对 industry 与 style exposure 线性中性化后的 residual style 信息。其作用是把风格非线性红利的一部分带回模型，同时避免直接把风险控制列混入 alpha tensor。
 
-| # | Feature Code | Carrier Axis | Residualization Meaning | Risk |
+| # | 特征代码 | 承载轴 | 残差化含义 | 风险 |
 | ---: | --- | --- | --- | --- |
 | 14 | `lag1_turnover_cost_proxy__resid_style` | Liquidity / turnover | 成交摩擦代理在行业、规模、流动性、波动、动量控制后的残差 | 长尾流动性陷阱，容量约束敏感 |
 | 15 | `lag1_turnover_20d_std__resid_style` | Liquidity / activity volatility | 20 日换手波动残差 | 活跃度突然变化可能映射拥挤交易 |
@@ -128,7 +128,7 @@ Strict mask 落盘审计口径：
 
 这些 residualized style columns 的中性化控制轴如下：
 
-| Style Axis | Representative Controls | Use In Pipeline |
+| 风格轴 | 代表性控制变量 | Pipeline 中的用途 |
 | --- | --- | --- |
 | Industry proxy | `industry`, `lag1_industry_turnover_rank`, `lag1_industry_amount_rank`, `lag1_industry_pb_rank`, `lag1_industry_mv_rank` | residualization、optimizer risk constraints |
 | Size | `lag1_log_circ_mv`, `lag1_log_total_mv`, `lag1_industry_mv_rank` | residualization、optimizer `industry_size` |
@@ -136,9 +136,9 @@ Strict mask 落盘审计口径：
 | Volatility | `lag1_ret_20d_std`, `lag1_ret_60d_std`, `lag1_amplitude`, `lag1_vol_log` | residualization、optimizer full style risk set |
 | Momentum | `lag1_ret_20d_mean`, `lag1_ret_60d_mean`, `lag1_ret_20d`, `lag1_ret_5d_mean` | residualization、regime/style interaction diagnostics |
 
-**组合含义**：18 特征是 **Aggressive but Poisonous**。它带回了 residual style 的火种，能帮助模型捕捉非线性风格红利和 regime-sensitive ranking；但这些信号在长尾个股上与容量、行业、规模、成交额高度纠缠。若 CVXPY 后端没有足够强的软约束、容量松弛和风格对冲机制，模型分数会把优化器推向约束边界，表现为 infeasible、fallback、或者为满足容量约束而持有大量现金。
+**组合含义**：18 特征是 **进攻性更强但带毒性**。它带回了 residual style 的火种，能帮助模型捕捉非线性风格红利和 regime-sensitive ranking；但这些信号在长尾个股上与容量、行业、规模、成交额高度纠缠。若 CVXPY 后端没有足够强的软约束、容量松弛和风格对冲机制，模型分数会把优化器推向约束边界，表现为 infeasible、fallback、或者为满足容量约束而持有大量现金。
 
-## 3. Transmission To The CVXPY Optimizer
+## 3. 到 CVXPY 优化器的传导机制
 
 ### 3.1 从模型分数到组合权重
 
@@ -155,7 +155,7 @@ maximize  alpha_z @ w
 
 关键硬约束包括：
 
-| Constraint | Meaning |
+| 约束 | 含义 |
 | --- | --- |
 | `sum(w) <= 1` | 多头现金账户，不允许杠杆 |
 | `w_i <= single_name_cap` | 单票权重上限，默认约等于 `1/k` |
@@ -170,7 +170,7 @@ maximize  alpha_z @ w
 
 本地可复核 evidence：
 
-| Scope | Avg Cash | Infeasible / Fallback |
+| 范围 | 平均现金 | Infeasible / Fallback |
 | --- | ---: | ---: |
 | `clean_alpha_only`, both_cash_buffer all grid | 40.8% | 547 / 15,072 |
 | `clean_alpha_only`, validation all grid | 45.5% | 344 / 9,024 |
@@ -184,7 +184,7 @@ maximize  alpha_z @ w
 
 本地可复核 evidence：
 
-| Scope | Avg Cash | Infeasible / Fallback |
+| 范围 | 平均现金 | Infeasible / Fallback |
 | --- | ---: | ---: |
 | `clean_alpha_resid_style`, both_cash_buffer all grid | 33.2% | 952 / 15,072 |
 | `clean_alpha_resid_style`, validation all grid | 36.8% | 682 / 9,024 |
@@ -196,7 +196,7 @@ maximize  alpha_z @ w
 
 后续模型改造的目标不是让模型在全截面均匀降低 MSE，而是让它在真实开仓域内排序正确。`TopKMarginICLoss(k=10)` 做了三件事：
 
-| Component | Algebraic Focus | Portfolio Meaning |
+| 组件 | 代数聚焦 | 组合含义 |
 | --- | --- | --- |
 | True top-k positives | `true_top_idx = topk(target, k)` | 把真实未来收益最高的 10 只股票作为多头 oracle |
 | Hard negatives | `topk(pred, k + negative_multiplier*k)` excluding true positives | 惩罚模型高分但真实收益不佳的 false positives |
@@ -206,14 +206,14 @@ maximize  alpha_z @ w
 
 这解释了为什么“换模型/换 loss”是主线，而不是只调优化器参数。优化器只能在给定 `pred_score` 上做可行域投影；如果模型分数本身没有在 TopK 开仓域聚焦，CVXPY 要么现金防守，要么被风格和容量约束反复打回。
 
-## 4. Recommended Operating Contract
+## 4. 推荐操作合同
 
-| Use Case | Recommended Tensor | Rationale |
+| 使用场景 | 推荐 Tensor | 理由 |
 | --- | --- | --- |
-| Baseline / audit / PM sanity check | `alpha_only` | 最干净、最容易解释 residual alpha 是否存在 |
-| Regime-aware model development | `alpha_resid_style` + gated architecture | 允许模型条件性使用 residual style carry |
-| Production optimizer research | 18 特征模型 + explicit soft exposure controls | 必须把 industry/size/liquidity/vol/mom 对冲和 capacity slack 一起调 |
-| Final test reporting | Locked test only after validation decision | 避免把 2025-2026 holdout 反复用于选择模型 |
+| 基线 / 审计 / PM sanity check | `alpha_only` | 最干净、最容易解释 residual alpha 是否存在 |
+| regime-aware 模型开发 | `alpha_resid_style` + gated architecture | 允许模型条件性使用 residual style carry |
+| 生产优化器研究 | 18 特征模型 + explicit soft exposure controls | 必须把 industry/size/liquidity/vol/mom 对冲和 capacity slack 一起调 |
+| 最终 test 汇报 | Locked test only after validation decision | 避免把 2025-2026 holdout 反复用于选择模型 |
 
 最低复核 checklist：
 

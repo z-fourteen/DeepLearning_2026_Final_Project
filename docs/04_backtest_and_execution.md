@@ -1,22 +1,21 @@
-# Backtest And Execution
+# 回测与执行
 
-Primary execution stack:
+主执行栈：
 
 ```powershell
 python scripts/backtest/run_clean_dataset_execution_stack.py --only-existing
 ```
 
-Focused clean-resid mainline:
+聚焦 clean-resid 主线：
 
 ```powershell
 python scripts/backtest/run_clean_resid_mainline.py
 ```
 
-The core execution artifact is the T+1 open-fill simulation:
+核心执行产物是 T+1 开盘成交仿真：
 
 ```text
 scripts/backtest/backtest_t1_fill_sim.py
 ```
 
-It evaluates buy and sell executability, partial capacity constraints,
-transaction costs, slippage, turnover, and benchmark-relative returns.
+该仿真会评估买入和卖出的可执行性、部分容量约束、交易成本、滑点、换手率以及相对基准收益。
