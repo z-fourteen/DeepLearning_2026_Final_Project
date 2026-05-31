@@ -56,7 +56,12 @@ training:
   ic_loss_min_samples: 20
   max_grad_norm: 1.0
   scheduler: "cosine"
-  early_stop_metric: "rank_ic_mean"
+  early_stop_metric: "checkpoint_score"
+  checkpoint_rank_ic_weight: 1.0
+  checkpoint_topk_weight: 2.0
+  checkpoint_dispersion_weight: 0.02
+  checkpoint_topk: 20
+  checkpoint_dispersion_floor: 0.003
   early_stop_patience: 12
   min_best_daily_ratio: 0.8
   collapse_stop_patience: 2
