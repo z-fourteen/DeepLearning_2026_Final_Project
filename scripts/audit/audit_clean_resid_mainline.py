@@ -133,7 +133,7 @@ def summarize_period_group(group: pd.DataFrame) -> dict[str, Any]:
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Audit the isolated clean-resid T+1 Top20 keep2x mainline.")
+    parser = argparse.ArgumentParser(description="Audit the compatibility T+1 route for the frozen final mainline.")
     parser.add_argument("--config", default="configs/backtest/clean_resid_t1_top20_keep2.yaml")
     parser.add_argument("--skip-heavy-sensitivity", action="store_true")
     return parser.parse_args()
@@ -502,9 +502,9 @@ def write_markdown(
     validation = mainline_summary[mainline_summary["split"].eq("validation")]
     test = mainline_summary[mainline_summary["split"].eq("test")]
     lines = [
-        "# Clean Resid T+1 Top20 Keep2x Mainline Audit",
+        "# Final Mainline T+1 Top10 Keep1x Compatibility Audit",
         "",
-        "Scope: isolated clean_alpha_resid_style route only. Full62 is used only as an optional overlap comparator.",
+        "Scope: frozen L60 feature-style interaction GRU epoch-12 route only. Full62 is used only as an optional overlap comparator.",
         "",
         "## Mainline Summary",
         "",

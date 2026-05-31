@@ -1,6 +1,8 @@
 # 特征-风格交互 GRU Wide30 闭环记录
 
-运行名称：
+本文件记录的是 L20 wide30 历史候选，不是最终冻结主线。
+
+历史候选运行名称：
 
 ```text
 feature_style_interaction_gru_l20_clean_alpha_resid_style_topk10_wide30_clean

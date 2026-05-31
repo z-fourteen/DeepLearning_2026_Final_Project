@@ -43,15 +43,15 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run T+1 fill simulation backtest.")
     parser.add_argument(
         "--predictions",
-        default="outputs/runs/gru_l20_clean_alpha_resid_style_purgedwf_strictmask_leaky0005/predictions.parquet",
+        default="outputs/runs/feature_style_interaction_gru_l60_clean_alpha_resid_style_topk10_wide30_clean/predictions.parquet",
     )
     parser.add_argument(
         "--execution-labels",
         default="data/mart/labels/execution_labels_v20260526.parquet",
     )
     parser.add_argument("--output-dir", default="outputs/backtest/t1_fill_sim")
-    parser.add_argument("--k", type=parse_int_list, default=parse_int_list("20"))
-    parser.add_argument("--keep-multiplier", type=parse_float_list, default=parse_float_list("2"))
+    parser.add_argument("--k", type=parse_int_list, default=parse_int_list("10"))
+    parser.add_argument("--keep-multiplier", type=parse_float_list, default=parse_float_list("1"))
     parser.add_argument("--cost-bps", type=float, default=10.0)
     parser.add_argument(
         "--slippage-bps",
@@ -72,7 +72,7 @@ def parse_args() -> argparse.Namespace:
         help="Max order notional as a fraction of next-day amount. Orders above cap are partially filled.",
     )
     parser.add_argument("--rebalance-stride", type=int, default=5)
-    parser.add_argument("--min-daily-count", type=int, default=20)
+    parser.add_argument("--min-daily-count", type=int, default=40)
     return parser.parse_args()
 
 

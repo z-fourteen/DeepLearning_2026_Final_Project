@@ -52,21 +52,21 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--predictions",
-        default="outputs/runs/gru_l20_clean_alpha_resid_style_purgedwf_strictmask_leaky0005/predictions.parquet",
+        default="outputs/runs/feature_style_interaction_gru_l60_clean_alpha_resid_style_topk10_wide30_clean/predictions.parquet",
     )
     parser.add_argument(
         "--labels",
-        default="data/mart/labels/labels_canonical_v20260526.parquet",
+        default="data/mart/labels/execution_labels_v20260526.parquet",
     )
-    parser.add_argument("--output-dir", default="outputs/backtest/t1_fill_sim/capacity_participation_matrix")
-    parser.add_argument("--k", type=parse_int_list, default=parse_int_list("10,30"))
-    parser.add_argument("--keep-multiplier", type=parse_float_list, default=parse_float_list("1,1.5,3"))
+    parser.add_argument("--output-dir", default="outputs/backtest/t1_fill_sim/final_mainline_capacity_participation_matrix")
+    parser.add_argument("--k", type=parse_int_list, default=parse_int_list("10"))
+    parser.add_argument("--keep-multiplier", type=parse_float_list, default=parse_float_list("1"))
     parser.add_argument("--portfolio-nav", type=parse_float_list, default=parse_float_list("1000000,10000000,50000000,100000000"))
     parser.add_argument("--participation-cap", type=parse_float_list, default=parse_float_list("0.01,0.03,0.05,0.10"))
     parser.add_argument("--cost-bps", type=float, default=10.0)
     parser.add_argument("--slippage-bps", type=float, default=5.0)
     parser.add_argument("--rebalance-stride", type=int, default=5)
-    parser.add_argument("--min-daily-count", type=int, default=20)
+    parser.add_argument("--min-daily-count", type=int, default=40)
     return parser.parse_args()
 
 

@@ -1,0 +1,98 @@
+competition:
+  start_date: "20260601"
+  end_date: "20260612"
+  trading_days:
+    - "20260601"
+    - "20260602"
+    - "20260603"
+    - "20260604"
+    - "20260605"
+    - "20260608"
+    - "20260609"
+    - "20260610"
+    - "20260611"
+    - "20260612"
+
+model:
+  config: outputs/runs/feature_style_interaction_gru_l60_clean_alpha_resid_style_topk10_wide30_clean/config.yaml
+  checkpoint: outputs/runs/feature_style_interaction_gru_l60_clean_alpha_resid_style_topk10_wide30_clean/model.pt
+  name: feature_style_interaction_gru_l60_clean_alpha_resid_style_topk10_wide30_clean
+  checkpoint_epoch: 12
+  lookback: 60
+  expected_features:
+    - lag1_net_mf_strength_20d_mean
+    - lag1_net_mf_strength_60d_mean
+    - lag1_close_position
+    - lag1_excess_ret_10d_mean
+    - lag1_excess_ret_1d
+    - lag1_excess_ret_5d_mean
+    - lag1_industry_neutral_ret_1d
+    - lag1_ret_1d
+    - lag1_ret_20d
+    - lag1_ret_5d_mean
+    - lag1_bollinger_z_20d
+    - lag1_ma_ratio_20_60
+    - lag1_macd_hist
+    - lag1_turnover_cost_proxy__resid_style
+    - lag1_turnover_20d_std__resid_style
+    - lag1_turnover_60d_std__resid_style
+    - lag1_amount_rank_pct__resid_style
+    - lag1_amount_log__resid_style
+
+optimizer:
+  risk_control: none
+  k: 10
+  style_penalty: 0.1
+  turnover_penalty: 0.0
+  exposure_cap: 0.15
+  min_invested: 0.8
+  turnover_cap: 0.5
+  participation_cap: 0.03
+  single_name_cap: 0.1
+  exposure_slack_penalty: 100.0
+  buy_capacity_slack_penalty: 1000.0
+  cash_penalty: 0.1
+  candidate_multiplier: 5.0
+  portfolio_nav: 10000000.0
+  cost_bps: 10.0
+  slippage_bps: 5.0
+  min_daily_count: 40
+  solver: CLARABEL
+  shortfall_penalty_base: 500.0
+  shortfall_penalty_max: 5000.0
+
+live_inputs:
+  # 标准 live panel parquet 合同：
+  # trade_date, ts_code/code, 以及 model.expected_features 中全部 18 个特征列。
+  # 每只股票至少需要 lookback=60 条按 trade_date 排序的历史行。
+  feature_panel: data/live/features/features_{trade_date}.parquet
+
+  # 可选：若盘前已经构造好 live NPZ，可直接提供 X, ts_code, trade_date, feature_names。
+  sequence_npz: data/live/features/live_sequence_{trade_date}.npz
+
+  # 当前开盘前账户持仓 old_w。至少包含 ts_code/code 与 weight；
+  # 若要生成股数级订单，建议同时包含 volume 与 market_value。
+  positions: data/live/account/positions_{trade_date}.csv
+
+  # 前一交易日收盘后的真实成交持仓。positions 必须与该文件 100% 对齐。
+  previous_close_positions: data/live/account/close_positions_{prev_trade_date}.csv
+
+  # 09:15 前价格快照，用于把权重差分转成股数。至少包含 ts_code/code 与 price/last_price/pre_close。
+  price_snapshot: data/live/market/quotes_{trade_date}_0920.csv
+
+  # 盘中监控状态文件。若接入半自动 API，可持续覆盖该文件。
+  broker_status: data/live/broker/order_status_{trade_date}.csv
+
+guards:
+  expected_universe_size: 5000
+  min_market_coverage_ratio: 0.8
+  position_weight_tolerance: 0.000001
+  position_volume_tolerance: 0
+  min_order_value: 1000.0
+  lot_size: 100
+
+outputs:
+  predictions_dir: outputs/live_predictions
+  targets_dir: outputs/live_targets
+  orders_dir: outputs/live_orders
+  monitor_dir: outputs/live_monitor
