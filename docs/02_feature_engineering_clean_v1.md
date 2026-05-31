@@ -1,18 +1,16 @@
-# Feature Engineering Clean V1
+# 特征工程 Clean V1
 
-`advanced_sequence_clean_v1` is the current feature contract.
+`advanced_sequence_clean_v1` 是当前特征合同。
 
-Primary file:
+主配置文件：
 
 ```text
 configs/features/advanced_sequence_clean_v1.yaml
 ```
 
-The feature set keeps the model tensor focused on the cleaned alpha pool while
-placing style, liquidity, and tradability variables into explicit control roles.
-This avoids silently mixing risk controls into alpha inputs.
+该特征集让模型 tensor 聚焦在清洗后的 alpha pool 上，同时把风格、流动性和可交易性变量放入明确的控制角色中。这可以避免将风险控制变量静默混入 alpha 输入。
 
-Historical development notes are archived in:
+历史开发记录已归档在：
 
 ```text
 docs/archive/feature_engineering_progress_20260529.md

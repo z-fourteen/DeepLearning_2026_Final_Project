@@ -1,59 +1,54 @@
-# New Model Clean Dataset Onboarding
+# 新模型接入 clean_dataset 指南
 
-This guide is the required interface contract for adding a new model after the
-repository moved to the `clean_dataset` mainline.
+本指南是仓库迁移到 `clean_dataset` 主线后，新增模型必须遵循的接口合同。
 
-## 1. Dataset Contract
+## 1. 数据集合同
 
-Active clean tensors live under:
+当前 clean tensors 位于：
 
 ```text
 data/mart/datasets/clean_purged_wf/
 ```
 
-Large tensor, sidecar, and filter-log files are local artifacts. Git tracks only
-the active clean artifacts through Git LFS, while legacy artifacts remain
-manifest-only.
+大型 tensor、sidecar 和 filter-log 文件属于本地产物。Git 仅通过 Git LFS 跟踪当前活跃的 clean artifacts；legacy artifacts 只保留 manifest。
 
-After cloning the repository, fetch the clean dataset artifacts with:
+克隆仓库后，使用以下命令拉取 clean dataset artifacts：
 
 ```powershell
 git lfs install
 git lfs pull
 ```
 
-Each clean tensor is a compressed NPZ with these required keys:
+每个 clean tensor 都是压缩 NPZ，并且必须包含以下 key：
 
-| Key | Shape | Meaning |
+| Key | Shape | 含义 |
 | --- | --- | --- |
-| `X` | `[N, lookback, num_features]` | model input tensor |
-| `y` | `[N]` | `label_rel_return` target |
-| `trade_date` | `[N]` | signal date |
-| `ts_code` | `[N]` | stock code |
-| `split` | `[N]` | `train`, `validation`, or `test` |
-| `feature_names` | `[num_features]` | ordered feature contract |
+| `X` | `[N, lookback, num_features]` | 模型输入 tensor |
+| `y` | `[N]` | `label_rel_return` 目标 |
+| `trade_date` | `[N]` | 信号日 |
+| `ts_code` | `[N]` | 股票代码 |
+| `split` | `[N]` | `train`、`validation` 或 `test` |
+| `feature_names` | `[num_features]` | 有序特征合同 |
 
-The current production tensors are:
+当前生产 tensors 为：
 
 ```text
 data/mart/datasets/clean_purged_wf/dataset_seq_l20_adv_clean_v1_alpha_only_chinext_purged_walk_forward.npz
 data/mart/datasets/clean_purged_wf/dataset_seq_l20_adv_clean_v1_alpha_resid_style_chinext_purged_walk_forward.npz
 ```
 
-Use `alpha_only` for the clean 13-alpha benchmark. Use
-`alpha_plus_residual_style` only when the experiment explicitly tests residual
-style information.
+clean 13-alpha 基准使用 `alpha_only`。只有当实验明确测试 residual style 信息时，才使用 `alpha_plus_residual_style`。
 
-## 2. Regenerate Clean Tensors
+## 2. 重新生成 Clean Tensors
 
-Run from the repository root with the project conda environment:
+在仓库根目录中，使用项目 conda 环境运行：
 
 ```powershell
 conda run -n dl_env python scripts/modeling/build_clean_model_datasets.py --data-version v20260526 --build-mode alpha_only --lookbacks 20
 conda run -n dl_env python scripts/modeling/build_clean_model_datasets.py --data-version v20260526 --build-mode alpha_plus_residual_style --lookbacks 20
 ```
 
-The builder reads:
+builder 会读取：
 
 ```text
 data/mart/datasets/core/dataset_v20260526.parquet
@@ -63,13 +58,11 @@ data/lake/state/security_daily_state.parquet
 data/lake/core/chinext_pool/chinext_pool_scd2.parquet
 ```
 
-It writes the NPZ tensor, sidecar parquet, filter log, and manifest to
-`data/mart/datasets/clean_purged_wf/`.
+并将 NPZ tensor、sidecar parquet、filter log 和 manifest 写入 `data/mart/datasets/clean_purged_wf/`。
 
-## 3. New Model Config Checklist
+## 3. 新模型配置检查清单
 
-Create a config under `configs/models/` and keep these fields aligned with the
-selected tensor:
+在 `configs/models/` 下创建配置，并确保以下字段与所选 tensor 对齐：
 
 ```yaml
 run:
@@ -89,16 +82,16 @@ model:
   lookback: 20
 ```
 
-Rules:
+规则：
 
-- `model.num_features` must equal `len(feature_names)` in the NPZ.
-- `model.lookback` must equal `X.shape[1]`.
-- Do not append risk controls or tradability masks into `X`.
-- Use validation for model selection. Treat test as the locked final holdout.
+- `model.num_features` 必须等于 NPZ 中 `len(feature_names)`。
+- `model.lookback` 必须等于 `X.shape[1]`。
+- 不要把风险控制变量或可交易 mask 追加进 `X`。
+- 使用 validation 做模型选择。test 必须作为锁定的最终 holdout。
 
-## 4. Data Loader Interface
+## 4. Data Loader 接口
 
-For PyTorch models, use:
+PyTorch 模型使用：
 
 ```python
 from src.data import SequenceNPZDataset
@@ -108,66 +101,65 @@ validation_dataset = SequenceNPZDataset(npz_path, "validation")
 test_dataset = SequenceNPZDataset(npz_path, "test")
 ```
 
-Each sample returns:
+每个样本返回：
 
 ```text
 x, y, trade_date, ts_code
 ```
 
-Date-batched training can use `DateBatchSampler` when the loss needs stable
-cross-sectional daily IC estimates.
+当 loss 需要稳定的日度截面 IC 估计时，可以使用 `DateBatchSampler` 进行 date-batched training。
 
-## 5. Prediction Output Contract
+## 5. 预测输出合同
 
-Any new model must write:
+任何新模型都必须写出：
 
 ```text
 outputs/runs/<run_name>/predictions.parquet
 ```
 
-with these columns:
+并包含以下列：
 
-| Column | Meaning |
+| 列名 | 含义 |
 | --- | --- |
-| `trade_date` | signal date |
-| `ts_code` | stock code |
-| `pred_score` | model score used for cross-sectional ranking |
-| `label_rel_return` | supervised label carried through for diagnostics |
-| `split` | train, validation, or test |
-| `model_name` | model identifier |
+| `trade_date` | 信号日 |
+| `ts_code` | 股票代码 |
+| `pred_score` | 用于截面排序的模型分数 |
+| `label_rel_return` | 随预测结果一起保留的监督标签，用于诊断 |
+| `split` | train、validation 或 test |
+| `model_name` | 模型标识 |
 
-The T+1 fill simulator and audits consume this schema directly.
+T+1 成交仿真器和审计流程会直接消费这一 schema。
 
-## 6. Smoke Tests Before Full Training
+## 6. 全量训练前的 Smoke Tests
 
-Run the loader dry-run:
+运行 loader dry-run：
 
 ```powershell
 conda run -n dl_env python scripts/modeling/train_sequence.py --config configs/models/gru_l20_clean_alpha_only.yaml --dry-run --device cpu
 ```
 
-Run the point-in-time pathcheck:
+运行 point-in-time pathcheck：
 
 ```powershell
 conda run -n dl_env python scripts/audit/audit_point_in_time.py --out-dir outputs/audit/_pathcheck_clean_model
 ```
 
-A new model is ready for full training only when:
+只有满足以下条件时，新模型才可以进入全量训练：
 
-- dataset dry-run loads all three splits
-- `num_features` and `lookback` match the NPZ
-- PIT audit reports zero blockers
-- output config writes to a new `outputs/runs/<run_name>/` directory
+- dataset dry-run 能加载全部三个 split
+- `num_features` 和 `lookback` 与 NPZ 匹配
+- PIT audit 报告零 blockers
+- 输出配置写入新的 `outputs/runs/<run_name>/` 目录
 
-## 7. Execution And Audit Handoff
+## 7. 执行与审计交接
 
-After training, route `predictions.parquet` through:
+训练完成后，将 `predictions.parquet` 接入：
 
 ```powershell
 conda run -n dl_env python scripts/backtest/backtest_t1_fill_sim.py --predictions outputs/runs/<run_name>/predictions.parquet
 ```
 
-For the current mainline residual-style candidate, use:
+对于当前主线 residual-style 候选模型，使用：
 
 ```powershell
 conda run -n dl_env python scripts/backtest/run_clean_dataset_execution_stack.py --only-existing
@@ -175,6 +167,4 @@ conda run -n dl_env python scripts/audit/audit_barra_lite_residual_alpha.py
 conda run -n dl_env python scripts/audit/audit_clean_resid_mainline.py
 ```
 
-New model results should be promoted only if validation performance, execution
-metrics, and audit findings are all documented before reading the final test
-holdout.
+只有在 validation 表现、执行指标和审计结论都完成记录之后，才能在读取最终 test holdout 前推进新模型结果。

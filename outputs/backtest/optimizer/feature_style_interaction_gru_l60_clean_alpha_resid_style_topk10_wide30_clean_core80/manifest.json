@@ -1,0 +1,61 @@
+{
+  "predictions": "outputs/runs/feature_style_interaction_gru_l60_clean_alpha_resid_style_topk10_wide30_clean/predictions.parquet",
+  "mart": "data/mart/datasets/core/dataset_v20260526.parquet",
+  "labels": "data/mart/labels/execution_labels_v20260526.parquet",
+  "output_dir": "outputs\\backtest\\optimizer\\feature_style_interaction_gru_l60_clean_alpha_resid_style_topk10_wide30_clean_core80",
+  "risk_control": [
+    "none",
+    "industry_size_liquidity_vol_mom"
+  ],
+  "k": [
+    10,
+    20,
+    30
+  ],
+  "style_penalty": [
+    0.0,
+    0.1
+  ],
+  "turnover_penalty": [
+    0.0,
+    0.02
+  ],
+  "exposure_cap": [
+    0.15
+  ],
+  "min_invested": [
+    0.8
+  ],
+  "turnover_cap": [
+    0.5
+  ],
+  "participation_cap": [
+    0.03
+  ],
+  "single_name_cap": [
+    0.1
+  ],
+  "exposure_slack_penalty": [
+    100.0
+  ],
+  "buy_capacity_slack_penalty": [
+    1000.0
+  ],
+  "cash_penalty": [
+    0.1
+  ],
+  "min_invested_shortfall_penalty": [
+    0.0
+  ],
+  "candidate_multiplier": 5.0,
+  "portfolio_nav": 10000000.0,
+  "cost_bps": 10.0,
+  "slippage_bps": 5.0,
+  "rebalance_stride": 5,
+  "min_daily_count": 40,
+  "solver": "CLARABEL",
+  "grid_runs": 24,
+  "period_rows": 3768,
+  "summary_rows": 48,
+  "method": "soft_exposure_slack_optimizer_grid"
+}
