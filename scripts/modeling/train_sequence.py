@@ -21,7 +21,7 @@ sys.path.insert(0, str(PROJECT_ROOT))
 
 from src.data import DateBatchSampler, SequenceNPZDataset  # noqa: E402
 from src.models import FeatureStyleInteractionGRUStockModel, GRUStockModel, RegimeGatedGRUStockModel  # noqa: E402
-from src.training import MSEICLoss, PearsonICLoss, TopKMarginICLoss, Trainer, resolve_device  # noqa: E402
+from src.training import MSEICLoss, PearsonICLoss, TopKBandMarginICLoss, TopKMarginICLoss, Trainer, resolve_device  # noqa: E402
 
 
 def load_yaml(path: Path) -> dict[str, Any]:
@@ -68,6 +68,22 @@ def build_loss(config: dict[str, Any]) -> torch.nn.Module:
             temperature=float(config.get("topk_loss_temperature", 0.01)),
             ic_alpha=float(config.get("topk_loss_ic_alpha", 0.2)),
             mse_alpha=float(config.get("topk_loss_mse_alpha", 0.02)),
+            eps=float(config.get("ic_loss_eps", 1e-8)),
+            min_samples=int(config.get("ic_loss_min_samples", 20)),
+        )
+    if loss_name in {"topk_band_margin_ic", "topk_band_margin"}:
+        return TopKBandMarginICLoss(
+            core_k=int(config.get("topk_core_k", config.get("topk_loss_k", 10))),
+            wide_k=int(config.get("topk_wide_k", 30)),
+            negative_multiplier=int(config.get("topk_loss_negative_multiplier", 4)),
+            core_margin=float(config.get("topk_core_margin", config.get("topk_loss_margin", 0.015))),
+            wide_margin=float(config.get("topk_wide_margin", 0.006)),
+            temperature=float(config.get("topk_loss_temperature", 0.01)),
+            core_weight=float(config.get("topk_core_weight", 1.0)),
+            wide_weight=float(config.get("topk_wide_weight", 0.35)),
+            portfolio_weight=float(config.get("topk_portfolio_weight", 0.5)),
+            ic_alpha=float(config.get("topk_loss_ic_alpha", 0.15)),
+            mse_alpha=float(config.get("topk_loss_mse_alpha", 0.005)),
             eps=float(config.get("ic_loss_eps", 1e-8)),
             min_samples=int(config.get("ic_loss_min_samples", 20)),
         )
