@@ -1,0 +1,23 @@
+mainline:
+  name: f18_mseic_t1_top20_keep2
+  description: F18 AttnPool MSE+IC Transformer T+1 open-fill Top20 keep2x execution.
+
+inputs:
+  predictions: outputs/runs/transformer_l20_f18_attnpool_mseic/predictions.parquet
+  model_config: configs/models/transformer_l20_f18_attnpool_mseic.yaml
+  dataset_manifest: data/mart/datasets/clean_purged_wf/dataset_seq_l20_adv_clean_v1_alpha_resid_style_chinext_purged_walk_forward_manifest.json
+  mart: data/mart/datasets/core/dataset_v20260526.parquet
+  execution_labels: data/mart/labels/execution_labels_v20260526.parquet
+
+execution:
+  k: 20
+  keep_multiplier: 2.0
+  cost_bps: 10.0
+  slippage_bps: 5.0
+  portfolio_nav: 10000000.0
+  participation_cap: 0.03
+  rebalance_stride: 5
+  min_daily_count: 20
+
+outputs:
+  backtest_dir: outputs/backtest/f18_mseic_t1_top20_keep2_mainline

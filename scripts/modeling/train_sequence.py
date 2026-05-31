@@ -25,7 +25,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from src.data import DateBatchSampler, SequenceNPZDataset  # noqa: E402
-from src.models import GRUStockModel, TransformerStockModel  # noqa: E402
+from src.models import GRUStockModel, TransformerStockModel, EnhancedTransformerModel  # noqa: E402
 from src.training import MSEICLoss, PearsonICLoss, Trainer, resolve_device  # noqa: E402
 
 
@@ -257,6 +257,7 @@ def main() -> None:
     _MODEL_REGISTRY: dict[str, type] = {
         "gru_baseline": GRUStockModel,
         "transformer_encoder": TransformerStockModel,
+        "transformer_enhanced": EnhancedTransformerModel,
     }
     model_name = str(model_config.get("name", "gru_baseline"))
     if model_name not in _MODEL_REGISTRY:

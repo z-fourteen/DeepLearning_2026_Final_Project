@@ -1,12 +1,10 @@
 {
   "output": "data\\mart\\labels\\execution_labels_v20260526.parquet",
-  "rows": 10719660,
-  "trade_dates": 2521,
+  "rows": 10712870,
+  "trade_dates": 2520,
   "stocks": 5761,
   "date_min": "20160104",
-  "date_max": "20260525",
+  "date_max": "20260522",
   "holding_days": 5,
-  "buy_executable_rate": 0.9585591334053506,
-  "sell_executable_rate": 0.9673162208502881,
-  "execution_return_coverage": 0.9973137207709946
+  "method": "quick_csv_v2_with_mart_bm"
 }

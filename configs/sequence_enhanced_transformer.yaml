@@ -1,0 +1,68 @@
+# Enhanced Transformer – l20, CLS pooling, intermediate FFN enabled
+# New features: extra hidden layer (IntermediateFFN) + Deep PredictionHead
+
+model_name: "EnhancedTransformer_l20_cls"
+model_class: "EnhancedTransformerModel"
+
+data:
+  dataset_path: "data/mart/datasets/sequence/dataset_sequence_l20_advanced_sequence_fixed_chinext_2016_2026_v1_v20260526.npz"
+  lookback: 20
+  num_features: 62
+
+model:
+  num_features: 62
+  d_model: 64
+  input_dropout: 0.1
+
+  # Encoder
+  num_encoder_layers: 2
+  num_heads: 4
+  dim_feedforward: 128
+  attn_dropout: 0.1
+  ff_dropout: 0.1
+  activation: "gelu"
+  norm_first: true
+
+  # Positional encoding
+  positional_encoding: "sinusoidal"       # sinusoidal | learnable
+
+  # Pooling: cls | last_step | attention | mean | max
+  pooling: "cls"
+  cls_max_len: 256
+
+  # ── NEW: Intermediate FFN (extra hidden layer per position) ──
+  use_intermediate_ffn: true               # toggle on/off the new FFN block
+  ffn_hidden_dim: 128                      # inner dim of the intermediate FFN
+  ffn_dropout: 0.1                         # dropout inside intermediate FFN
+  ffn_activation: "gelu"                   # activation inside intermediate FFN
+
+  # ── NEW: Deep PredictionHead ──
+  deep_head: true                          # True -> DeepPredictionHead, False -> original single-layer head
+  head_num_hidden_layers: 2                # number of hidden layers in prediction head (>=1)
+  head_hidden_dim: 64
+  head_dropout: 0.3
+
+training:
+  optimizer: "adamw"
+  peak_lr: 3.0e-4
+  weight_decay: 1.0e-3
+  batch_size: 256
+  max_epochs: 80
+  warmup_ratio: 0.1
+  scheduler: "warmup_cosine"
+  max_grad_norm: 1.0
+  loss_fn: "mse_ic"                        # huber | mse | pearson_ic | mse_ic
+  ic_loss_alpha: 0.2
+  ic_loss_eps: 0.000001
+  ic_loss_min_samples: 20
+
+early_stopping:
+  metric: "rank_ic_mean"
+  patience: 12
+  mode: "max"
+
+checkpoint:
+  save_best_only: true
+  output_dir: "outputs/runs/enhanced_transformer_l20_cls"
+
+tags: ["enhanced_transformer", "l20", "cls", "intermediate_ffn", "deep_head"]

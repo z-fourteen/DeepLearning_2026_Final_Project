@@ -1,10 +1,10 @@
 run:
-  name: "transformer_l20_clean_alpha_only_purgedwf"
-  output_dir: "outputs/runs/transformer_l20_clean_alpha_only_purgedwf"
+  name: "StdTF-l20-attn-mseic-f18"
+  output_dir: "outputs/runs/StdTF-l20-attn-mseic-f18"
   seed: 42
 
 data:
-  npz_path: "data/mart/datasets/clean_purged_wf/dataset_seq_l20_adv_clean_v1_alpha_only_chinext_purged_walk_forward.npz"
+  npz_path: "data/mart/datasets/clean_purged_wf/dataset_seq_l20_adv_clean_v1_alpha_resid_style_chinext_purged_walk_forward.npz"
   train_split: "train"
   validation_split: "validation"
   test_split: "test"
@@ -13,7 +13,7 @@ data:
 
 model:
   name: "transformer_encoder"
-  num_features: 13
+  num_features: 18
   lookback: 20
   d_model: 64
   input_dropout: 0.1
@@ -25,7 +25,7 @@ model:
   activation: "gelu"
   norm_first: true
   positional_encoding: "sinusoidal"
-  pooling: "cls"
+  pooling: "attention"
   cls_max_len: 256
   head_hidden_dim: 64
   head_dropout: 0.3
@@ -38,8 +38,10 @@ training:
   optimizer: "adamw"
   learning_rate: 0.0003
   weight_decay: 0.001
-  loss_fn: "huber"
-  huber_delta: 1.0
+  loss_fn: "mse_ic"
+  ic_loss_alpha: 0.2
+  ic_loss_eps: 1e-8
+  ic_loss_min_samples: 2
   max_grad_norm: 1.0
   scheduler: "warmup_cosine"
   warmup_ratio: 0.1
