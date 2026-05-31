@@ -1,0 +1,71 @@
+run:
+  name: "EnhancedTF-l60-cls-mse-f13-label5"
+  output_dir: "outputs/runs/EnhancedTF-l60-cls-mse-f13-label5"
+  seed: 42
+
+data:
+  npz_path: "data/mart/datasets/clean_purged_wf/dataset_seq_l60_adv_clean_v1_alpha_only_chinext_purged_walk_forward.npz"
+  train_split: "train"
+  validation_split: "validation"
+  test_split: "test"
+  num_workers: 0
+  pin_memory: true
+
+model:
+  name: "transformer_enhanced"
+  num_features: 13
+  lookback: 60
+  d_model: 64
+  input_dropout: 0.1
+
+  # Encoder
+  num_encoder_layers: 2
+  num_heads: 4
+  dim_feedforward: 128
+  attn_dropout: 0.1
+  ff_dropout: 0.1
+  activation: "gelu"
+  norm_first: true
+
+  # Positional encoding
+  positional_encoding: "sinusoidal"
+
+  # Pooling: CLS token
+  pooling: "cls"
+  cls_max_len: 256
+
+  # ── Intermediate FFN (extra hidden layer per position) ──
+  use_intermediate_ffn: true
+  ffn_hidden_dim: 128
+  ffn_dropout: 0.1
+  ffn_activation: "gelu"
+
+  # ── Deep PredictionHead ──
+  deep_head: true
+  head_num_hidden_layers: 2
+  head_hidden_dim: 64
+  head_dropout: 0.3
+
+training:
+  device: "auto"
+  batch_size: 256
+  batch_mode: "date"
+  max_epochs: 80
+  optimizer: "adamw"
+  learning_rate: 0.0003
+  weight_decay: 0.001
+  loss_fn: "mse"
+  huber_delta: 1.0
+  ic_loss_eps: 0.000001
+  ic_loss_min_samples: 20
+  max_grad_norm: 1.0
+  scheduler: "warmup_cosine"
+  warmup_ratio: 0.1
+  early_stop_metric: "rank_ic_mean"
+  early_stop_patience: 12
+  min_best_daily_ratio: 0.8
+  collapse_stop_patience: 2
+  collapse_stop_statuses:
+    - "prediction_collapse"
+  min_daily_count: 20
+  label_scale: 5.0

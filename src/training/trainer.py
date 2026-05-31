@@ -62,6 +62,7 @@ class Trainer:
         self.checkpoint_dispersion_weight = float(self.config.get("checkpoint_dispersion_weight", 0.0))
         self.checkpoint_topk = int(self.config.get("checkpoint_topk", 20))
         self.checkpoint_dispersion_floor = float(self.config.get("checkpoint_dispersion_floor", 0.0))
+        self.label_scale = float(self.config.get("label_scale", 1.0))
         self.history: list[dict[str, float | int | str]] = []
         self.best_metric = float("-inf")
         self.best_state_dict: dict[str, torch.Tensor] | None = None
@@ -77,6 +78,8 @@ class Trainer:
         for batch in pbar:
             x = batch["x"].to(self.device, non_blocking=True)
             y = batch["y"].to(self.device, non_blocking=True).view(-1)
+            if self.label_scale != 1.0:
+                y = y * self.label_scale
 
             self.optimizer.zero_grad(set_to_none=True)
             pred = self.model(x).view(-1)
@@ -107,6 +110,8 @@ class Trainer:
         for batch in pbar:
             x = batch["x"].to(self.device, non_blocking=True)
             y = batch["y"].to(self.device, non_blocking=True).view(-1)
+            if self.label_scale != 1.0:
+                y = y * self.label_scale
             pred = self.model(x).view(-1)
             loss = self._compute_loss(pred, y, batch)
 
