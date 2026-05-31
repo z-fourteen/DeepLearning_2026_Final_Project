@@ -47,11 +47,19 @@ worklog/
 
 # Generated pipeline artifacts
 data/lake/raw/**/*.parquet
-data/lake/core/**/*.parquet
-data/lake/state/**/*.parquet
-data/mart/**/*.parquet
-data/mart/datasets/**/*.npz
-data/mart/datasets/**/*_filter_log.csv
+data/lake/core/*
+data/lake/core/**/*
+!data/lake/core/.gitkeep
+!data/lake/core/chinext_pool/
+!data/lake/core/chinext_pool/chinext_pool_scd2.parquet
+data/lake/state/*
+data/lake/state/**/*
+!data/lake/state/.gitkeep
+!data/lake/state/security_daily_state.parquet
+data/mart/*
+data/mart/**/*
+!data/mart/.gitkeep
+!data/mart/datasets/
 !data/mart/datasets/core/
 !data/mart/datasets/core/dataset_v20260526.parquet
 !data/mart/datasets/clean_purged_wf/
@@ -60,6 +68,9 @@ data/mart/datasets/**/*_filter_log.csv
 !data/mart/datasets/clean_purged_wf/*_filter_log.csv
 !data/mart/datasets/*manifest*.json
 !data/mart/datasets/**/*manifest*.json
+!data/mart/features_daily/
+!data/mart/features_daily/features_daily_v20260526.parquet
+data/mart/datasets/**/*.npz
 legacy/legacy_full62_v1/data_manifests/datasets/**/*.npz
 legacy/legacy_full62_v1/data_manifests/datasets/**/*.parquet
 legacy/legacy_full62_v1/data_manifests/datasets/**/*_filter_log.csv
@@ -78,7 +89,11 @@ outputs/**
 !outputs/**/*findings.md
 !outputs/**/leakage_findings.md
 !outputs/**/suspect_features.txt
-outputs/runs/
+outputs/runs/*
+outputs/runs/**/*
+!outputs/runs/StdTF-l60-cls-mse-f13/
+!outputs/runs/StdTF-l60-cls-mse-f13/*
+!outputs/runs/StdTF-l60-cls-mse-f13/**
 
 # AI-generated session notes
 AI_docs/
