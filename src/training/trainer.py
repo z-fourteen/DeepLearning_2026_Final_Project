@@ -56,6 +56,11 @@ class Trainer:
         self.collapse_stop_statuses = {str(status) for status in collapse_statuses}
         self.min_daily_count = int(self.config.get("min_daily_count", 20))
         self.min_best_daily_ratio = float(self.config.get("min_best_daily_ratio", 0.8))
+        self.checkpoint_rank_ic_weight = float(self.config.get("checkpoint_rank_ic_weight", 1.0))
+        self.checkpoint_topk_weight = float(self.config.get("checkpoint_topk_weight", 0.0))
+        self.checkpoint_dispersion_weight = float(self.config.get("checkpoint_dispersion_weight", 0.0))
+        self.checkpoint_topk = int(self.config.get("checkpoint_topk", 20))
+        self.checkpoint_dispersion_floor = float(self.config.get("checkpoint_dispersion_floor", 0.0))
         self.history: list[dict[str, float | int | str]] = []
         self.best_metric = float("-inf")
         self.best_state_dict: dict[str, torch.Tensor] | None = None
@@ -117,6 +122,7 @@ class Trainer:
         )
         metrics["val_loss"] = total_loss / max(total_samples, 1)
         metrics.update(self._prediction_diagnostics(pred_tensor, target_tensor))
+        metrics.update(self._checkpoint_diagnostics(pred_tensor, target_tensor, all_dates, metrics))
         return metrics
 
     def fit(self, max_epochs: int, checkpoint_path: str | Path | None = None) -> list[dict[str, float | int | str]]:
@@ -241,4 +247,55 @@ class Trainer:
             "pred_max": stat(valid_pred, "max"),
             "target_mean": stat(valid_target, "mean"),
             "target_std": stat(valid_target, "std"),
+        }
+
+    def _checkpoint_diagnostics(
+        self,
+        pred: torch.Tensor,
+        target: torch.Tensor,
+        trade_dates: list[str],
+        metrics: Mapping[str, Any],
+    ) -> dict[str, float]:
+        rank_ic = float(metrics.get("rank_ic_mean", float("nan")))
+        rank_ic_for_score = rank_ic if math.isfinite(rank_ic) else 0.0
+        if pred.numel() == 0 or len(trade_dates) != pred.numel():
+            score = self.checkpoint_rank_ic_weight * rank_ic_for_score
+            return {
+                "topk_proxy_mean": float("nan"),
+                "dispersion_floor_ratio": float("nan"),
+                "checkpoint_score": float(score),
+            }
+
+        pred = pred.float()
+        target = target.float()
+        finite = torch.isfinite(pred) & torch.isfinite(target)
+        topk_returns: list[torch.Tensor] = []
+        dispersion_pass: list[float] = []
+        date_keys = [str(date) for date in trade_dates]
+        for date in sorted(set(date_keys)):
+            mask = pred.new_tensor([key == date for key in date_keys], dtype=torch.bool) & finite
+            day_pred = pred[mask]
+            day_target = target[mask]
+            if day_pred.numel() < max(2, min(self.checkpoint_topk, self.min_daily_count)):
+                continue
+            k = min(self.checkpoint_topk, day_pred.numel())
+            top_idx = torch.topk(day_pred, k=k, largest=True).indices
+            topk_returns.append(day_target[top_idx].mean())
+            if day_pred.numel() >= 2:
+                dispersion = float(day_pred.std(unbiased=True).item())
+                dispersion_pass.append(float(dispersion >= self.checkpoint_dispersion_floor))
+
+        topk_proxy = torch.stack(topk_returns).mean().item() if topk_returns else float("nan")
+        dispersion_ratio = float(sum(dispersion_pass) / len(dispersion_pass)) if dispersion_pass else float("nan")
+        topk_for_score = topk_proxy if math.isfinite(topk_proxy) else 0.0
+        dispersion_for_score = dispersion_ratio if math.isfinite(dispersion_ratio) else 0.0
+        score = (
+            self.checkpoint_rank_ic_weight * rank_ic_for_score
+            + self.checkpoint_topk_weight * topk_for_score
+            + self.checkpoint_dispersion_weight * dispersion_for_score
+        )
+        return {
+            "topk_proxy_mean": float(topk_proxy),
+            "dispersion_floor_ratio": float(dispersion_ratio),
+            "checkpoint_score": float(score),
         }
