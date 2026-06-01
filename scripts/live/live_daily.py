@@ -326,33 +326,11 @@ def run_data_dag(data_version: str, end_date: str, incremental: bool = True) -> 
     if incremental:
         cmd.append("--incremental")
     print(f"  执行命令: {' '.join(cmd)}")
-    result = subprocess.run(cmd, cwd=PROJECT_ROOT, capture_output=True, text=True,
-                            encoding="utf-8", errors="replace")
+    result = subprocess.run(cmd, cwd=PROJECT_ROOT)
 
     if result.returncode != 0:
-        print(f"\n  [错误] 数据流水线失败！")
-        print(f"  输出: {result.stdout[-500:]}")
-        print(f"  错误: {result.stderr[-500:]}")
+        print(f"\n  [错误] 数据流水线失败！退出码: {result.returncode}")
         raise RuntimeError("数据流水线执行失败")
-
-    stdout = result.stdout.strip()
-    json_start = stdout.rfind("{")
-    if json_start >= 0:
-        try:
-            summary = json.loads(stdout[json_start:])
-            steps = summary.get("steps", [])
-            dag_mode = summary.get("dag_mode", "full")
-            print(f"  流水线模式: {dag_mode}")
-            for step in steps:
-                name = step.get("step", "?")
-                r = step.get("result", {})
-                if r.get("skipped"):
-                    reason = r.get("reason", "")
-                    print(f"  [跳过] {name} {f'({reason})' if reason else ''}")
-                else:
-                    print(f"  [完成] {name}")
-        except json.JSONDecodeError:
-            print(f"  [输出] {stdout[-200:]}")
 
     print("\n  数据更新完成，特征矩阵已就绪。")
 

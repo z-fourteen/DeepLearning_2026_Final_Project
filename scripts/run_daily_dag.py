@@ -19,6 +19,7 @@ def run_step(name: str, args: list[str], capture: bool = True) -> dict:
         kwargs["errors"] = "replace"
     else:
         kwargs["capture_output"] = False
+    print(f"  [{name}] 开始执行...", flush=True)
     completed = subprocess.run(command, **kwargs)
     if completed.returncode != 0:
         stderr = getattr(completed, "stderr", "") or ""
@@ -70,7 +71,7 @@ def main() -> None:
         args.skip_pool = True  # 成分股池几乎不变，跳过
 
     if not args.skip_ingest:
-        results.append(run_step("ingest_raw", ["scripts/data/run_ingest_raw.py", "--data-version", args.data_version]))
+        results.append(run_step("ingest_raw", ["scripts/data/run_ingest_raw.py", "--data-version", args.data_version], capture=False))
     else:
         results.append({"step": "ingest_raw", "result": {"skipped": True}})
 
@@ -121,12 +122,16 @@ def main() -> None:
                     "--end-date",
                     args.end_date,
                 ],
+                capture=False,
             )
         )
     else:
         results.append({"step": "build_mart", "result": {"skipped": True}})
 
     mode = "incremental" if args.incremental else "full"
+    print(f"\n  数据流水线完成！模式: {mode}", flush=True)
+    for r in results:
+        print(f"    ✓ {r['step']}", flush=True)
     print(json.dumps({
         "data_version": args.data_version,
         "dag_mode": mode,
