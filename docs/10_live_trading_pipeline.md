@@ -1,6 +1,6 @@
-# 2026-06-01 至 2026-06-12 实盘流水线
+﻿# 2026-06-01 至 2026-06-12 实盘流水线
 
-本文记录比赛 10 个交易日的实盘流水线入口、输入合同、强断言和盘中执行辅助逻辑。
+本文记录比赛 10 个交易日的实盘流水线入口、输入合同、强断言、盘中执行辅助，以及收盘估值口径。
 
 ## 一键入口
 
@@ -31,7 +31,7 @@ CONDA_NO_PLUGINS=true
 conda run --no-capture-output -n dl_env ...
 ```
 
-这样可以避免 Windows GBK 控制台与 conda stdout 捕获导致的中文输出崩溃。
+这样可以避免 Windows GBK 控制台与 conda stdout 捕获导致的中文输出乱码。
 
 ## 时间轴
 
@@ -41,6 +41,8 @@ conda run --no-capture-output -n dl_env ...
 | 09:00-09:15 | CVXPY live optimizer | `scripts/live/02_live_optimization.py` | `outputs/live_targets/target_weights_YYYYMMDD.csv` |
 | 09:15-09:25 | 目标调仓差分明细 | `scripts/live/03_generate_target_orders.py` | `outputs/live_orders/orders_YYYYMMDD.csv` |
 | 09:30-15:00 | 盘中残股监控与撤单重报建议 | `scripts/live/04_intraday_execution_monitor.py` | `outputs/live_monitor/intraday_advice_YYYYMMDD.csv` |
+| 成交确认后 | 手工录入真实成交价和成交股数 | `scripts/live/05_interactive_execution.py` | `outputs/live/orders/execution_YYYYMMDD.json`、`outputs/live/portfolio_state.json` |
+| 收盘后 | 读取 raw daily 当日 close 并计算实际收益 | `scripts/live/06_close_valuation.py` | `outputs/live/valuations/valuation_YYYYMMDD.*` |
 
 ## 配置入口
 
@@ -61,7 +63,7 @@ configs/live/live_trading.yaml
 
 ## 输入数据合同
 
-### live feature panel
+### Live Feature Panel
 
 默认路径：
 
@@ -117,7 +119,7 @@ feature_names
 data/live/account/positions_{trade_date}.csv
 ```
 
-上一交易日真实收盘成交持仓：
+上一交易日真实收盘后成交持仓：
 
 ```text
 data/live/account/close_positions_{prev_trade_date}.csv
@@ -148,6 +150,8 @@ ts_code 或 code
 price 或 last_price 或 open 或 pre_close 或 close
 ```
 
+该价格只用于把目标权重转换成订单股数，以及作为成交交互的默认参考价。成交成本以 `05_interactive_execution.py` 中录入的真实成交价为准。
+
 ## 强断言
 
 ### 数据缺失断言
@@ -163,7 +167,7 @@ positions_{trade_date}.csv
 close_positions_{prev_trade_date}.csv
 ```
 
-若 `weight` 或 `volume` 与上一交易日真实收盘成交持仓不一致，脚本立即终止，防止 old_w 时间轴断裂。
+若 `weight` 或 `volume` 与上一交易日真实收盘持仓不一致，脚本立即终止，防止 `old_w` 时间轴断裂。
 
 ### 模型输入合同
 
@@ -218,16 +222,6 @@ target_volume
 delta_weight
 ```
 
-终端会打印：
-
-```text
-【买入调仓看板】
-code action target_value target_volume
-
-【卖出调仓看板】
-code action target_value target_volume
-```
-
 交易股数按 `guards.lot_size=100` 向下取整，低于 `guards.min_order_value=1000` 的碎单会自动过滤。
 
 ## 盘中执行辅助
@@ -265,7 +259,7 @@ tick_size
 
 盘中监控逻辑：
 
-- 每次读取未成交残股 `unfilled_volume = submitted_volume - filled_volume`。
+- 每次读取未成交残股：`unfilled_volume = submitted_volume - filled_volume`。
 - BUY 单建议价格：`best_ask + ticks * tick_size`。
 - SELL 单建议价格：`best_bid - ticks * tick_size`。
 - 终端打印撤单重报建议。
@@ -277,6 +271,74 @@ TWAP/VWAP 执行原则：
 - 10:00-14:30 按成交量曲线匀速追踪，连续 N 分钟未成交则撤单重报。
 - 14:30 后优先保证 `min_invested` 和卖出风险释放，可更积极向五档盘口让价。
 - 14:50 后仍有未成交买单且仓位低于 80%，必须人工确认是否以更激进价格追单。
+
+## 成交交互
+
+`05_interactive_execution.py` 只负责记录真实成交，不负责计算当日收益。
+
+运行示例：
+
+```powershell
+python scripts/live/05_interactive_execution.py --trade-date 20260601 --orders-csv outputs/live_orders/orders_20260601.csv --price-snapshot data/live/market/quotes_20260601_0920.csv --no-push
+```
+
+交互端录入的 `actual_price` 是真实成交价，会写入 `avg_cost` 作为持仓成本。它不是收盘价，也不能直接作为当日盯市收益价格。
+
+## 收盘估值
+
+收盘后，`A股数据/daily/YYYYMMDD.csv` 会更新当日 raw daily 文件。阶段六只读取该文件中的真实 `close`，并据此计算组合盯市收益；不再手工逐只录入收盘价，也不再使用盘前 quote snapshot。
+
+```powershell
+python scripts/live/06_close_valuation.py --trade-date 20260601 --daily-csv "A股数据/daily/20260601.csv" --write-close-positions
+```
+
+若使用默认路径，可省略 `--daily-csv`：
+
+```powershell
+python scripts/live/06_close_valuation.py --trade-date 20260601 --write-close-positions
+```
+
+阶段六默认会查找 `outputs/live/orders/execution_YYYYMMDD.json`。若该日志存在且当天是初始建仓日，脚本会用 `status in {filled, partial}`、`actual_shares > 0`、`actual_price > 0` 的成交记录重建一份理论持仓，并与 `portfolio_state.json` 比对；`skipped`、`failed` 和 `actual_shares=0` 的记录不会计入。若发现 state 与 execution 不一致，脚本会终止，避免用错误持仓计算收盘收益。
+
+如需显式按 execution 修复 state 后再估值，使用：
+
+```powershell
+python scripts/live/06_close_valuation.py --trade-date 20260601 --daily-csv "A股数据/daily/20260601.csv" --rebuild-state-from-execution --write-close-positions
+```
+
+Raw daily CSV 最低列要求：
+
+```text
+ts_code 或 code
+trade_date
+close
+```
+
+输出：
+
+```text
+outputs/live/valuations/valuation_YYYYMMDD.csv
+outputs/live/valuations/valuation_YYYYMMDD.json
+data/live/account/close_positions_YYYYMMDD.csv  # 仅在 --write-close-positions 时生成
+```
+
+收益计算口径：
+
+```text
+position_value = sum(shares * close_price)
+NAV = cash + position_value
+daily_pnl = NAV - previous_nav
+daily_return = daily_pnl / previous_nav
+unrealized_pnl_vs_cost = position_value - sum(shares * avg_cost)
+```
+
+若未提供 `--previous-nav`，首日默认以前一基准 NAV `state.initial_nav` 为收益基准；后续交易日优先使用上一条 `last_valuation.nav`。
+
+## 2026-06-01 建仓日口径修正
+
+2026-06-01 的实盘记录按“下午初始建仓”处理。当天组合在交易前为空仓，交互端录入的 `actual_price` 均为真实买入成交价，用于形成持仓成本；这些价格不是官方收盘价，也不是用于当日盯市收益计算的估值价格。
+
+因此，2026-06-01 不确认日内 PnL，也不报告当日收益率。`outputs/live/orders/execution_20260601.json` 已合并首批建仓单和补仓单，并标注 `day_classification=initial_build`、`same_day_return_applicable=false`。若需要确认 2026-06-01 的真实交易收益，必须在收盘后通过 `06_close_valuation.py` 输入官方收盘价，生成独立估值记录。
 
 ## 最终开盘前命令
 
