@@ -50,6 +50,7 @@ data/lake/raw/**/*.parquet
 data/lake/core/**/*.parquet
 data/lake/state/**/*.parquet
 data/mart/**/*.parquet
+!data/mart/**/*.parquet
 data/mart/datasets/**/*.npz
 data/mart/datasets/**/*_filter_log.csv
 !data/mart/datasets/core/

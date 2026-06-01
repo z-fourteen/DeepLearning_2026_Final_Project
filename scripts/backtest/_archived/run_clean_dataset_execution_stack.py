@@ -13,12 +13,17 @@ import pandas as pd
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 RUNS = {
+    "final_mainline_l60_ckptscore_e12": PROJECT_ROOT
+    / "outputs"
+    / "runs"
+    / "feature_style_interaction_gru_l60_clean_alpha_resid_style_topk10_wide30_clean"
+    / "predictions.parquet",
     "clean_alpha_only": PROJECT_ROOT
     / "outputs"
     / "runs"
     / "gru_l20_clean_alpha_only_purgedwf_strictmask_leaky0005"
     / "predictions.parquet",
-    "clean_alpha_resid_style": PROJECT_ROOT
+    "legacy_l20_clean_alpha_resid_style": PROJECT_ROOT
     / "outputs"
     / "runs"
     / "gru_l20_clean_alpha_resid_style_purgedwf_strictmask_leaky0005"

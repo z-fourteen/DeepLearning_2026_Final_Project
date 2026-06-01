@@ -8,13 +8,14 @@ experiment:
   feature_set: advanced_sequence_clean_v1
 
 modeling:
-  primary_model: gru_l20_clean_alpha_resid_style
+  primary_model: feature_style_interaction_gru_l60_clean_alpha_resid_style_topk10_wide30_clean
   baseline_model: gru_l20_clean_alpha_only
-  lookback: 20
-  batch_size: 256
-  max_epochs: 80
-  loss_fn: mse_ic
-  early_stop_metric: rank_ic_mean
+  lookback: 60
+  batch_size: 384
+  max_epochs: 90
+  loss_fn: topk_band_margin_ic
+  early_stop_metric: checkpoint_score
+  frozen_checkpoint_epoch: 12
 
 execution:
   simulator: t1_open_fill
@@ -29,3 +30,4 @@ audit:
   point_in_time: true
   residual_alpha: true
   capacity_sensitivity: true
+  final_optimizer_config: configs/portfolio/final_mainline_optimizer.yaml

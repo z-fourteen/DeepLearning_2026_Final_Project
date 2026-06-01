@@ -43,7 +43,7 @@ def resolve_path(path: str) -> Path:
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Run the isolated clean-resid T+1 Top20 keep2x mainline.")
+    parser = argparse.ArgumentParser(description="Run the compatibility T+1 route for the frozen final mainline.")
     parser.add_argument("--config", default="configs/backtest/clean_resid_t1_top20_keep2.yaml")
     parser.add_argument("--output-dir", help="Override outputs.backtest_dir from config.")
     return parser.parse_args()
@@ -112,7 +112,7 @@ def main() -> None:
         "rows_after_merge": int(len(data)),
         "execution": execution,
         "summary": summary,
-        "method": "isolated_clean_resid_t1_open_top20_keep2x",
+        "method": "final_mainline_t1_open_top10_keep1x_compat",
     }
     (out_dir / "manifest.json").write_text(
         json.dumps(json_safe(manifest), ensure_ascii=False, indent=2),

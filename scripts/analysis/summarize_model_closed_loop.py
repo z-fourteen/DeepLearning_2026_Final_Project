@@ -17,16 +17,16 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Summarize a model's train -> execution -> optimizer loop.")
     parser.add_argument(
         "--run-name",
-        default="feature_style_interaction_gru_l20_clean_alpha_resid_style_topk10_wide30_clean",
+        default="feature_style_interaction_gru_l60_clean_alpha_resid_style_topk10_wide30_clean",
     )
     parser.add_argument(
         "--optimizer-suffix",
-        default="core80",
+        default="ckptscore_e12_core80",
         help="Suffix used by outputs/backtest/optimizer/<run_name>_<suffix>.",
     )
     parser.add_argument(
         "--output-dir",
-        default="outputs/analysis/feature_style_interaction_gru_l20_topk10_wide30_clean_closed_loop",
+        default="outputs/analysis/feature_style_interaction_gru_l60_ckptscore_e12_closed_loop",
     )
     parser.add_argument(
         "--compare-run",
@@ -100,13 +100,16 @@ def summarize_training(metrics_path: Path) -> pd.DataFrame:
     best_rows = [row for row in metrics["history"] if int(row["epoch"]) == best_epoch]
     best = best_rows[0] if best_rows else {}
     summary = metrics.get("summary", {})
+    selection_metric = str(metrics.get("stop_reason", "")).removeprefix("metric_early_stop:")
     return pd.DataFrame(
         [
             {
                 "run_name": summary.get("run_name"),
                 "best_epoch": best_epoch,
-                "best_rank_ic_mean": metrics.get("best_metric"),
+                "selection_metric": selection_metric or best.get("selection_metric"),
+                "best_metric": metrics.get("best_metric"),
                 "best_ic_mean": best.get("ic_mean"),
+                "best_rank_ic_mean": best.get("rank_ic_mean"),
                 "best_rank_icir": best.get("rank_icir"),
                 "best_val_loss": best.get("val_loss"),
                 "best_pred_std": best.get("pred_std"),
@@ -191,8 +194,9 @@ def write_markdown(
         "## Executive Readout",
         "",
         (
-            f"- Training selected epoch {int(best['best_epoch'])} with validation rank IC "
-            f"{best['best_rank_ic_mean']:.6f} and rank ICIR {best['best_rank_icir']:.6f}."
+            f"- Training selected epoch {int(best['best_epoch'])} with validation "
+            f"{best['selection_metric']} {best['best_metric']:.6f}; "
+            f"rank IC mean was {best['best_rank_ic_mean']:.6f}."
         ),
         "- The executable loop is complete: predictions, T+1 fill simulation, soft optimizer grid, and this summary are all materialized.",
         "- The key risk is validation/test divergence: validation execution metrics are negative, while test absolute returns are strong. Treat this as research evidence, not a promotion signal.",

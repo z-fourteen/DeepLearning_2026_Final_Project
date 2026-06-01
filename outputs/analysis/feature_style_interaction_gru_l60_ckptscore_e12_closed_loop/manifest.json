@@ -1,0 +1,15 @@
+{
+  "run_name": "feature_style_interaction_gru_l60_clean_alpha_resid_style_topk10_wide30_clean",
+  "run_dir": "D:\\05_fourteen\\ustc-life\\2026spring\\DL\\Final_Project\\outputs\\runs\\feature_style_interaction_gru_l60_clean_alpha_resid_style_topk10_wide30_clean",
+  "t1_metrics": "D:\\05_fourteen\\ustc-life\\2026spring\\DL\\Final_Project\\outputs\\backtest\\t1_fill_sim\\feature_style_interaction_gru_l60_clean_alpha_resid_style_topk10_wide30_clean\\t1_fill_metrics.json",
+  "optimizer_summary": "D:\\05_fourteen\\ustc-life\\2026spring\\DL\\Final_Project\\outputs\\backtest\\optimizer\\feature_style_interaction_gru_l60_clean_alpha_resid_style_topk10_wide30_clean_ckptscore_e12_core80\\soft_optimizer_grid_summary.csv",
+  "output_dir": "D:\\05_fourteen\\ustc-life\\2026spring\\DL\\Final_Project\\outputs\\analysis\\feature_style_interaction_gru_l60_ckptscore_e12_closed_loop",
+  "rows": {
+    "training": 1,
+    "prediction_diagnostics": 2,
+    "t1_summary": 24,
+    "optimizer_summary": 48,
+    "t1_compare": 12
+  },
+  "method": "closed_loop_model_summary"
+}

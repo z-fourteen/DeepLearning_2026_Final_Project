@@ -1,0 +1,43 @@
+mainline:
+  name: feature_style_interaction_gru_l60_clean_alpha_resid_style_topk10_wide30_clean_ckptscore_e12
+  status: frozen_final
+  freeze_date: "2026-05-31"
+  selection_metric: checkpoint_score
+  checkpoint_epoch: 12
+
+inputs:
+  predictions: outputs/runs/feature_style_interaction_gru_l60_clean_alpha_resid_style_topk10_wide30_clean/predictions.parquet
+  model_config: outputs/runs/feature_style_interaction_gru_l60_clean_alpha_resid_style_topk10_wide30_clean/config.yaml
+  model_metrics: outputs/runs/feature_style_interaction_gru_l60_clean_alpha_resid_style_topk10_wide30_clean/metrics.json
+  model_checkpoint: outputs/runs/feature_style_interaction_gru_l60_clean_alpha_resid_style_topk10_wide30_clean/model.pt
+  mart: data/mart/datasets/core/dataset_v20260526.parquet
+  labels: data/mart/labels/execution_labels_v20260526.parquet
+
+optimizer:
+  risk_control: none
+  k: 10
+  style_penalty: 0.1
+  turnover_penalty: 0.0
+  exposure_cap: 0.15
+  min_invested: 0.8
+  turnover_cap: 0.5
+  participation_cap: 0.03
+  single_name_cap: 0.1
+  exposure_slack_penalty: 100.0
+  buy_capacity_slack_penalty: 1000.0
+  cash_penalty: 0.1
+  min_invested_shortfall_penalty: 0.0
+  candidate_multiplier: 5.0
+  portfolio_nav: 10000000.0
+  cost_bps: 10.0
+  slippage_bps: 5.0
+  rebalance_stride: 5
+  min_daily_count: 40
+  solver: CLARABEL
+
+evidence:
+  optimizer_grid: outputs/backtest/optimizer/feature_style_interaction_gru_l60_clean_alpha_resid_style_topk10_wide30_clean_ckptscore_e12_core80
+  validation_attribution: outputs/analysis/feature_style_interaction_gru_l60_ckptscore_e12_validation_attribution
+
+outputs:
+  output_dir: outputs/backtest/optimizer/final_mainline_ckptscore_e12
