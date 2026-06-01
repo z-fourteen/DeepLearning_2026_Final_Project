@@ -99,8 +99,6 @@ Examples:
     parser.add_argument("--initial-nav", type=float, default=1_000_000.0)
     parser.add_argument("--no-push", action="store_true", help="Skip git push in interactive execution stage.")
     parser.add_argument("--push-branch", help="Branch to push in interactive execution stage.")
-    parser.add_argument("--run-intraday-monitor", action="store_true", help="Run one intraday monitor check after orders.")
-    parser.add_argument("--monitor-loop", action="store_true", help="Keep intraday monitor looping.")
     return parser.parse_args()
 
 
@@ -234,19 +232,6 @@ def run_live_stages(args: argparse.Namespace, trade_date: str, feature_date: str
             execution.append("--no-push")
         append_optional(execution, "--push-branch", args.push_branch)
         run_command("Stage 5: interactive execution", execution, interactive=True)
-
-    if args.run_intraday_monitor:
-        monitor = [
-            sys.executable,
-            "scripts/live/04_intraday_execution_monitor.py",
-            "--config",
-            config,
-            "--trade-date",
-            trade_date,
-        ]
-        if args.monitor_loop:
-            monitor.append("--loop")
-        run_command("Stage 4: intraday monitor", monitor, interactive=args.monitor_loop)
 
 
 def main() -> None:

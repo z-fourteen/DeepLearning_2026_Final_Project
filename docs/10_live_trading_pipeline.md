@@ -1,6 +1,6 @@
 ﻿# 2026-06-01 至 2026-06-12 实盘流水线
 
-本文记录比赛 10 个交易日的实盘流水线入口、输入合同、强断言、盘中执行辅助，以及收盘估值口径。
+本文记录比赛 10 个交易日的实盘流水线入口、输入合同、强断言、成交确认，以及收盘估值口径。
 
 ## 一键入口
 
@@ -14,12 +14,6 @@
 
 ```powershell
 .\run_live_trading_pipeline.ps1 -TradeDate 20260601 -WaitForSchedule
-```
-
-盘前完成后继续进入盘中未成交残股监控：
-
-```powershell
-.\run_live_trading_pipeline.ps1 -TradeDate 20260601 -WaitForSchedule -RunIntradayMonitor
 ```
 
 PowerShell 入口会强制设置：
@@ -40,7 +34,6 @@ conda run --no-capture-output -n dl_env ...
 | 08:30-09:00 | 盘前数据校验与 Alpha 推理 | `scripts/live/01_live_inference.py` | `outputs/live_predictions/predictions_YYYYMMDD.parquet` |
 | 09:00-09:15 | CVXPY live optimizer | `scripts/live/02_live_optimization.py` | `outputs/live_targets/target_weights_YYYYMMDD.csv` |
 | 09:15-09:25 | 目标调仓差分明细 | `scripts/live/03_generate_target_orders.py` | `outputs/live_orders/orders_YYYYMMDD.csv` |
-| 09:30-15:00 | 盘中残股监控与撤单重报建议 | `scripts/live/04_intraday_execution_monitor.py` | `outputs/live_monitor/intraday_advice_YYYYMMDD.csv` |
 | 成交确认后 | 手工录入真实成交价和成交股数 | `scripts/live/05_interactive_execution.py` | `outputs/live/orders/execution_YYYYMMDD.json`、`outputs/live/portfolio_state.json` |
 | 收盘后 | 读取 raw daily 当日 close 并计算实际收益 | `scripts/live/06_close_valuation.py` | `outputs/live/valuations/valuation_YYYYMMDD.*` |
 
@@ -223,54 +216,6 @@ delta_weight
 ```
 
 交易股数按 `guards.lot_size=100` 向下取整，低于 `guards.min_order_value=1000` 的碎单会自动过滤。
-
-## 盘中执行辅助
-
-单次检查：
-
-```powershell
-conda run --no-capture-output -n dl_env python scripts/live/04_intraday_execution_monitor.py --trade-date 20260601
-```
-
-循环检查：
-
-```powershell
-conda run --no-capture-output -n dl_env python scripts/live/04_intraday_execution_monitor.py --trade-date 20260601 --loop --interval-minutes 5 --ticks 2
-```
-
-broker status 文件默认路径：
-
-```text
-data/live/broker/order_status_{trade_date}.csv
-```
-
-最低列要求：
-
-```text
-code
-action
-submitted_volume
-filled_volume
-order_price
-best_bid
-best_ask
-tick_size
-```
-
-盘中监控逻辑：
-
-- 每次读取未成交残股：`unfilled_volume = submitted_volume - filled_volume`。
-- BUY 单建议价格：`best_ask + ticks * tick_size`。
-- SELL 单建议价格：`best_bid - ticks * tick_size`。
-- 终端打印撤单重报建议。
-- 建议落盘到 `outputs/live_monitor/intraday_advice_YYYYMMDD.csv`。
-
-TWAP/VWAP 执行原则：
-
-- 09:30-10:00 完成 20%-30% 目标量，避免开盘冲击。
-- 10:00-14:30 按成交量曲线匀速追踪，连续 N 分钟未成交则撤单重报。
-- 14:30 后优先保证 `min_invested` 和卖出风险释放，可更积极向五档盘口让价。
-- 14:50 后仍有未成交买单且仓位低于 80%，必须人工确认是否以更激进价格追单。
 
 ## 成交交互
 

@@ -13,8 +13,7 @@ param(
   [switch]$Execute,
   [switch]$Reset,
   [switch]$NoPush,
-  [switch]$WaitForSchedule,
-  [switch]$RunIntradayMonitor
+  [switch]$WaitForSchedule
 )
 
 $ErrorActionPreference = "Stop"
@@ -115,16 +114,6 @@ Invoke-LiveStage "09:15-09:25 target orders" @(
   "--config", $Config,
   "--trade-date", $TradeDate
 )
-
-if ($RunIntradayMonitor) {
-  Wait-UntilClock "09:30"
-  Invoke-LiveStage "09:30-15:00 intraday execution monitor" @(
-    "scripts/live/04_intraday_execution_monitor.py",
-    "--config", $Config,
-    "--trade-date", $TradeDate,
-    "--loop"
-  )
-}
 
 if ($Execute) {
   $ExecutionArgs = @(
