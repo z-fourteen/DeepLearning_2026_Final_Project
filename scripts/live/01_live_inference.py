@@ -7,7 +7,6 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 import torch
-
 from common import (
     assert_market_coverage,
     build_frozen_model,
@@ -27,7 +26,9 @@ from common import (
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Live stage 1: feature validation and frozen-model inference.")
+    parser = argparse.ArgumentParser(
+        description="Live stage 1: feature validation and frozen-model inference."
+    )
     parser.add_argument("--config", default="configs/live/live_trading.yaml")
     parser.add_argument("--trade-date", default=today_yyyymmdd())
     parser.add_argument(
@@ -41,7 +42,9 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def load_live_npz(path: Path, config: dict, feature_date: str) -> tuple[np.ndarray, list[str]]:
+def load_live_npz(
+    path: Path, config: dict, feature_date: str
+) -> tuple[np.ndarray, list[str]]:
     if not path.exists():
         die(f"live sequence npz not found: {path}")
     data = np.load(path, allow_pickle=True)
@@ -51,12 +54,16 @@ def load_live_npz(path: Path, config: dict, feature_date: str) -> tuple[np.ndarr
     feature_names = data["feature_names"].astype(str).tolist()
     expected = config["model"]["expected_features"]
     if feature_names != expected:
-        die(f"live npz feature order mismatch; expected={expected}, actual={feature_names}")
+        die(
+            f"live npz feature order mismatch; expected={expected}, actual={feature_names}"
+        )
     x = data["X"].astype("float32", copy=False)
     if x.ndim != 3:
         die(f"live npz X must be [N,T,F], got shape={x.shape}")
     if x.shape[1] != int(config["model"]["lookback"]) or x.shape[2] != len(expected):
-        die(f"live npz shape mismatch: got={x.shape}, expected T={config['model']['lookback']}, F={len(expected)}")
+        die(
+            f"live npz shape mismatch: got={x.shape}, expected T={config['model']['lookback']}, F={len(expected)}"
+        )
     if not np.isfinite(x).all():
         die("live npz contains NaN/Inf; refuse to infer")
     codes = data["ts_code"].astype(str).tolist()
@@ -65,21 +72,33 @@ def load_live_npz(path: Path, config: dict, feature_date: str) -> tuple[np.ndarr
     return x, codes
 
 
-def build_sequences_from_panel(path: Path, config: dict, feature_date: str) -> tuple[np.ndarray, list[str]]:
+def build_sequences_from_panel(
+    path: Path, config: dict, feature_date: str
+) -> tuple[np.ndarray, list[str]]:
     if not path.exists():
-        die(f"live feature parquet not found: {path}")
-    panel = pd.read_parquet(path)
+        die(f"live feature panel not found: {path}")
+    # 支持 CSV 或 Parquet 格式
+    if str(path).endswith(".csv"):
+        panel = pd.read_csv(path)
+    else:
+        panel = pd.read_parquet(path)
     panel = normalize_code_column(normalize_date_column(panel))
     expected_features = config["model"]["expected_features"]
-    ensure_columns(panel, ["trade_date", "ts_code", *expected_features], "live feature panel")
+    ensure_columns(
+        panel, ["trade_date", "ts_code", *expected_features], "live feature panel"
+    )
 
     today_rows = panel[panel["trade_date"].eq(feature_date)].copy()
-    assert_market_coverage(today_rows, config, f"live feature panel feature_date={feature_date}")
+    assert_market_coverage(
+        today_rows, config, f"live feature panel feature_date={feature_date}"
+    )
 
     lookback = int(config["model"]["lookback"])
     sequences: list[np.ndarray] = []
     codes: list[str] = []
-    panel = panel[panel["trade_date"].le(feature_date)].sort_values(["ts_code", "trade_date"])
+    panel = panel[panel["trade_date"].le(feature_date)].sort_values(
+        ["ts_code", "trade_date"]
+    )
 
     for code, group in panel.groupby("ts_code", sort=True):
         if group["trade_date"].iloc[-1] != feature_date:
@@ -87,7 +106,11 @@ def build_sequences_from_panel(path: Path, config: dict, feature_date: str) -> t
         tail = group.tail(lookback)
         if len(tail) != lookback:
             continue
-        values = tail[expected_features].apply(pd.to_numeric, errors="coerce").to_numpy(dtype="float32")
+        values = (
+            tail[expected_features]
+            .apply(pd.to_numeric, errors="coerce")
+            .to_numpy(dtype="float32")
+        )
         if not np.isfinite(values).all():
             continue
         sequences.append(values)
@@ -102,7 +125,9 @@ def build_sequences_from_panel(path: Path, config: dict, feature_date: str) -> t
 
 
 @torch.no_grad()
-def run_inference(model: torch.nn.Module, x: np.ndarray, batch_size: int, device: torch.device) -> np.ndarray:
+def run_inference(
+    model: torch.nn.Module, x: np.ndarray, batch_size: int, device: torch.device
+) -> np.ndarray:
     preds: list[np.ndarray] = []
     for start in range(0, len(x), batch_size):
         batch = torch.from_numpy(x[start : start + batch_size]).to(device)
@@ -119,8 +144,24 @@ def main() -> None:
     prev_trade_date = "NA"
     input_cfg = config["live_inputs"]
 
-    npz_path = resolve_path(args.sequence_npz) if args.sequence_npz else format_path(input_cfg["sequence_npz"], trade_date=feature_date, prev_trade_date=prev_trade_date)
-    parquet_path = resolve_path(args.features_parquet) if args.features_parquet else format_path(input_cfg["feature_panel"], trade_date=feature_date, prev_trade_date=prev_trade_date)
+    npz_path = (
+        resolve_path(args.sequence_npz)
+        if args.sequence_npz
+        else format_path(
+            input_cfg["sequence_npz"],
+            trade_date=feature_date,
+            prev_trade_date=prev_trade_date,
+        )
+    )
+    parquet_path = (
+        resolve_path(args.features_parquet)
+        if args.features_parquet
+        else format_path(
+            input_cfg["feature_panel"],
+            trade_date=feature_date,
+            prev_trade_date=prev_trade_date,
+        )
+    )
 
     # 优先使用 parquet，因为比赛数据通常以日更 parquet 到达；若 parquet 缺失，则尝试使用预构造 NPZ。
     if parquet_path.exists():
@@ -166,7 +207,9 @@ def main() -> None:
     )
 
     print("\n【阶段一完成】冻结模型 live inference")
-    print(f"trade_date={trade_date} feature_date={feature_date} rows={len(predictions)} output={out_parquet}")
+    print(
+        f"trade_date={trade_date} feature_date={feature_date} rows={len(predictions)} output={out_parquet}"
+    )
     print("\nTop 20 预测分数：")
     print(predictions.head(20)[["ts_code", "pred_score"]].to_string(index=False))
     print("\nBottom 10 风险尾部：")
