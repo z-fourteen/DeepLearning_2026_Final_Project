@@ -74,7 +74,7 @@ python scripts/live/live_daily.py \
 - `--run-dag`: 运行完整的数据流水线（ingest → pool → state → validate → mart）
 - `--data-version v20260526`: 数据版本号
 - `--end-date 20260529`: 数据截止日期（最新交易日）
-- `--reset`: 首次建仓，清空旧持仓，从 1000 万现金开始
+- `--reset`: 首次建仓，清空旧持仓，从 100 万现金开始
 
 > 首次运行预计 **3-8 分钟**（全量构建流水线）。
 

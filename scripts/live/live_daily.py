@@ -138,7 +138,7 @@ DEFAULT_K = 20                          # 持仓股票数量：选得分最高�
 DEFAULT_REBALANCE_STRIDE = 3            # 每隔几个交易日调仓一次
 DEFAULT_REBALANCE_FRACTION = 0.33       # 每次调仓替换33%（约7只）
 DEFAULT_MIN_POSITION_RATIO = 0.80       # 最低仓位要求：80%
-DEFAULT_NAV = 10_000_000.0             # 默认初始资金：1000万
+DEFAULT_NAV = 1_000_000.0              # 默认初始资金：100万
 LOT_SIZE = 100                           # A股最小买入单位：100股（一手）
 
 
@@ -804,8 +804,27 @@ class LivePortfolioManager:
 
 
 def extract_prices(df: pd.DataFrame, latest_date: str) -> dict[str, float]:
-    """从特征矩阵中提取最新日期的收盘价"""
+    """提取最新日期的收盘价
+
+    优先从原始日行情 CSV（A股数据/daily/）读取，回退到特征矩阵中的 close 列。
+    """
     prices = {}
+    # 优先从原始日行情读取
+    csv_path = PROJECT_ROOT / "A股数据" / "daily" / f"{latest_date}.csv"
+    if csv_path.exists():
+        try:
+            raw = pd.read_csv(csv_path, encoding="gbk", usecols=["ts_code", "close"])
+            for _, row in raw.iterrows():
+                p = pd.to_numeric(row.get("close"), errors="coerce")
+                if pd.notna(p) and p > 0:
+                    prices[str(row["ts_code"])] = float(p)
+            if prices:
+                print(f"  从原始日行情提取了 {len(prices)} 只股票的收盘价 (作为参考价)")
+                return prices
+        except Exception as e:
+            print(f"  [注意] 读取原始日行情失败: {e}，回退到特征矩阵")
+
+    # 回退：从特征矩阵提取
     day_df = df[df["trade_date"] == latest_date]
     if "close" in day_df.columns:
         for _, row in day_df.iterrows():
@@ -815,7 +834,7 @@ def extract_prices(df: pd.DataFrame, latest_date: str) -> dict[str, float]:
     if prices:
         print(f"  提取了 {len(prices)} 只股票的收盘价 (作为参考价)")
     else:
-        print(f"  [注意] 特征矩阵中没有收盘价列，订单中的价格将显示为空")
+        print(f"  [注意] 未找到收盘价数据，订单中的价格将显示为空")
         print(f"         你需要在执行时手动输入实际价格")
     return prices
 
@@ -913,13 +932,8 @@ def interactive_execute_orders(
                 actual_price = o.close_price or 0
                 print(f"  ║    [提示] 价格输入无效，使用参考价 ¥{actual_price:.2f}")
 
-            # 输入实际成交股数
-            if choice == "c":
-                shares_input = _ask_input("实际卖出股数 (100的倍数)", str(o.target_shares))
-            elif choice == "p":
-                shares_input = _ask_input("实际卖出股数 (100的倍数)", str(o.target_shares))
-            else:
-                shares_input = str(o.target_shares)
+            # 输入实际成交股数（始终询问）
+            shares_input = _ask_input("实际卖出股数 (100的倍数)", str(o.target_shares))
 
             try:
                 actual_shares = int(shares_input)
@@ -991,16 +1005,14 @@ def interactive_execute_orders(
                 actual_price = o.close_price or 0
                 print(f"  ║    [提示] 价格输入无效，使用参考价 ¥{actual_price:.2f}")
 
-            # 输入实际成交股数
-            if choice in ("p", "c"):
-                shares_input = _ask_input("实际买入股数 (100的倍数)", str(o.target_shares))
-                try:
-                    actual_shares = int(shares_input)
-                    actual_shares = (actual_shares // LOT_SIZE) * LOT_SIZE
-                except ValueError:
-                    actual_shares = o.target_shares
-            else:
+            # 输入实际成交股数（始终询问，因为实际成交可能因涨跌停等原因不同）
+            shares_input = _ask_input("实际买入股数 (100的倍数)", str(o.target_shares))
+            try:
+                actual_shares = int(shares_input)
+                actual_shares = (actual_shares // LOT_SIZE) * LOT_SIZE
+            except ValueError:
                 actual_shares = o.target_shares
+                print(f"  ║    [提示] 股数输入无效，使用计划数量 {actual_shares}")
 
             actual_value = actual_shares * actual_price
 
