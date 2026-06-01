@@ -20,13 +20,15 @@ from common import (
     write_json,
 )
 
-from scripts.portfolio.optimize_feasible_cash_buffer import prepare_lp_universe, solve_day_lp
-
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Live stage 2: optimize target absolute weights from old_w and live scores.")
     parser.add_argument("--config", default="configs/live/live_trading.yaml")
     parser.add_argument("--trade-date", default=today_yyyymmdd())
+    parser.add_argument(
+        "--feature-date",
+        help="As-of feature/liquidity date. Defaults to --trade-date for same-day live panels.",
+    )
     parser.add_argument("--predictions")
     parser.add_argument("--positions")
     parser.add_argument("--previous-close-positions")
@@ -104,7 +106,10 @@ def build_live_day(predictions: pd.DataFrame, liquidity: pd.DataFrame, positions
 
 def main() -> None:
     args = parse_args()
+    from scripts.portfolio.optimize_feasible_cash_buffer import prepare_lp_universe, solve_day_lp
+
     trade_date = str(args.trade_date)
+    feature_date = str(args.feature_date or args.trade_date)
     config = load_yaml(args.config)
     prev_trade_date = previous_trading_day(config, trade_date)
     paths = config["live_inputs"]
@@ -116,7 +121,7 @@ def main() -> None:
         if args.previous_close_positions
         else format_path(paths["previous_close_positions"], trade_date=trade_date, prev_trade_date=prev_trade_date)
     )
-    liq_path = resolve_path(args.liquidity_parquet) if args.liquidity_parquet else format_path(paths["feature_panel"], trade_date=trade_date, prev_trade_date=prev_trade_date)
+    liq_path = resolve_path(args.liquidity_parquet) if args.liquidity_parquet else format_path(paths["feature_panel"], trade_date=feature_date, prev_trade_date=prev_trade_date)
 
     if not pred_path.exists():
         die(f"missing live predictions: {pred_path}")
@@ -125,12 +130,18 @@ def main() -> None:
     previous_positions = load_positions(prev_pos_path, "previous close positions")
     assert_position_inheritance(current_positions, previous_positions, config)
 
-    liquidity = load_live_liquidity(liq_path, trade_date)
+    liquidity = load_live_liquidity(liq_path, feature_date)
     day = build_live_day(predictions, liquidity, current_positions, trade_date)
     current = dict(zip(current_positions["ts_code"].astype(str), current_positions["weight"].astype(float)))
 
     opt = config["optimizer"]
     shortfall_penalty = dynamic_shortfall_penalty(config, trade_date)
+    current_invested = float(sum(max(0.0, weight) for weight in current.values()))
+    configured_turnover_cap = float(opt["turnover_cap"])
+    effective_turnover_cap = configured_turnover_cap
+    first_day_empty_book = current_invested <= 1e-8
+    if first_day_empty_book:
+        effective_turnover_cap = max(configured_turnover_cap, float(opt["min_invested"]))
     risk_cols: list[str] = []
     universe = prepare_lp_universe(
         day=day,
@@ -153,7 +164,7 @@ def main() -> None:
         exposure_cap=float(opt["exposure_cap"]),
         single_name_cap=float(opt["single_name_cap"]),
         min_invested=float(opt["min_invested"]),
-        turnover_cap=float(opt["turnover_cap"]),
+        turnover_cap=effective_turnover_cap,
         portfolio_nav=float(opt["portfolio_nav"]),
         participation_cap=float(opt["participation_cap"]),
         exposure_slack_penalty=float(opt["exposure_slack_penalty"]),
@@ -179,9 +190,13 @@ def main() -> None:
         out_dir / f"manifest_{trade_date}.json",
         {
             "trade_date": trade_date,
+            "feature_date": feature_date,
             "prev_trade_date": prev_trade_date,
             "target_weights": str(out_csv),
             "optimizer": opt,
+            "configured_turnover_cap": configured_turnover_cap,
+            "effective_turnover_cap": effective_turnover_cap,
+            "first_day_empty_book": first_day_empty_book,
             "time_decay_shortfall_penalty": shortfall_penalty,
             "stats": stats,
             "target_invested_weight": float(target["target_weight"].sum()),
@@ -190,8 +205,13 @@ def main() -> None:
     )
 
     print("\n【阶段二完成】CVXPY live optimizer")
-    print(f"trade_date={trade_date} output={out_csv}")
+    print(f"trade_date={trade_date} feature_date={feature_date} output={out_csv}")
     print(f"time_decay_shortfall_penalty={shortfall_penalty:.2f}")
+    if first_day_empty_book and effective_turnover_cap > configured_turnover_cap:
+        print(
+            f"first_day_empty_book=True, turnover_cap temporarily raised "
+            f"{configured_turnover_cap:.4f} -> {effective_turnover_cap:.4f}"
+        )
     print(f"status={stats['optimizer_status']} invested={stats['invested_weight']:.4f} cash={stats['cash_weight']:.4f}")
     if stats.get("min_invested_shortfall", 0.0) > 1e-8:
         print("\a【仓位警报】min_invested 未完全达到，已用动态短缺惩罚生成最大可达组合，请优先执行买单。")

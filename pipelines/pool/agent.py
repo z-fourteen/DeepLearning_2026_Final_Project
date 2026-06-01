@@ -37,7 +37,8 @@ def read_file_registry(project_root: Path, config: dict[str, Any]) -> pd.DataFra
 
 
 def read_raw_dataset(project_root: Path, registry: pd.DataFrame, dataset: str) -> pd.DataFrame:
-    rows = registry[(registry["dataset"] == dataset) & (registry["status"] == "ingested")]
+    valid_status = registry["status"].isin(["ingested", "reused_existing"])
+    rows = registry[(registry["dataset"] == dataset) & valid_status]
     if rows.empty:
         raise ValueError(f"No ingested raw files found for dataset={dataset}")
 

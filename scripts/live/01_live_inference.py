@@ -30,6 +30,10 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Live stage 1: feature validation and frozen-model inference.")
     parser.add_argument("--config", default="configs/live/live_trading.yaml")
     parser.add_argument("--trade-date", default=today_yyyymmdd())
+    parser.add_argument(
+        "--feature-date",
+        help="As-of feature date used to build sequences. Defaults to --trade-date for same-day feature files.",
+    )
     parser.add_argument("--features-parquet")
     parser.add_argument("--sequence-npz")
     parser.add_argument("--device", default="auto")
@@ -37,7 +41,7 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def load_live_npz(path: Path, config: dict, trade_date: str) -> tuple[np.ndarray, list[str]]:
+def load_live_npz(path: Path, config: dict, feature_date: str) -> tuple[np.ndarray, list[str]]:
     if not path.exists():
         die(f"live sequence npz not found: {path}")
     data = np.load(path, allow_pickle=True)
@@ -56,12 +60,12 @@ def load_live_npz(path: Path, config: dict, trade_date: str) -> tuple[np.ndarray
     if not np.isfinite(x).all():
         die("live npz contains NaN/Inf; refuse to infer")
     codes = data["ts_code"].astype(str).tolist()
-    frame = pd.DataFrame({"ts_code": codes, "trade_date": trade_date})
+    frame = pd.DataFrame({"ts_code": codes, "trade_date": feature_date})
     assert_market_coverage(frame, config, "live npz")
     return x, codes
 
 
-def build_sequences_from_panel(path: Path, config: dict, trade_date: str) -> tuple[np.ndarray, list[str]]:
+def build_sequences_from_panel(path: Path, config: dict, feature_date: str) -> tuple[np.ndarray, list[str]]:
     if not path.exists():
         die(f"live feature parquet not found: {path}")
     panel = pd.read_parquet(path)
@@ -69,16 +73,16 @@ def build_sequences_from_panel(path: Path, config: dict, trade_date: str) -> tup
     expected_features = config["model"]["expected_features"]
     ensure_columns(panel, ["trade_date", "ts_code", *expected_features], "live feature panel")
 
-    today_rows = panel[panel["trade_date"].eq(trade_date)].copy()
-    assert_market_coverage(today_rows, config, f"live feature panel trade_date={trade_date}")
+    today_rows = panel[panel["trade_date"].eq(feature_date)].copy()
+    assert_market_coverage(today_rows, config, f"live feature panel feature_date={feature_date}")
 
     lookback = int(config["model"]["lookback"])
     sequences: list[np.ndarray] = []
     codes: list[str] = []
-    panel = panel[panel["trade_date"].le(trade_date)].sort_values(["ts_code", "trade_date"])
+    panel = panel[panel["trade_date"].le(feature_date)].sort_values(["ts_code", "trade_date"])
 
     for code, group in panel.groupby("ts_code", sort=True):
-        if group["trade_date"].iloc[-1] != trade_date:
+        if group["trade_date"].iloc[-1] != feature_date:
             continue
         tail = group.tail(lookback)
         if len(tail) != lookback:
@@ -110,19 +114,20 @@ def run_inference(model: torch.nn.Module, x: np.ndarray, batch_size: int, device
 def main() -> None:
     args = parse_args()
     trade_date = str(args.trade_date)
+    feature_date = str(args.feature_date or args.trade_date)
     config = load_yaml(args.config)
     prev_trade_date = "NA"
     input_cfg = config["live_inputs"]
 
-    npz_path = resolve_path(args.sequence_npz) if args.sequence_npz else format_path(input_cfg["sequence_npz"], trade_date=trade_date, prev_trade_date=prev_trade_date)
-    parquet_path = resolve_path(args.features_parquet) if args.features_parquet else format_path(input_cfg["feature_panel"], trade_date=trade_date, prev_trade_date=prev_trade_date)
+    npz_path = resolve_path(args.sequence_npz) if args.sequence_npz else format_path(input_cfg["sequence_npz"], trade_date=feature_date, prev_trade_date=prev_trade_date)
+    parquet_path = resolve_path(args.features_parquet) if args.features_parquet else format_path(input_cfg["feature_panel"], trade_date=feature_date, prev_trade_date=prev_trade_date)
 
     # 优先使用 parquet，因为比赛数据通常以日更 parquet 到达；若 parquet 缺失，则尝试使用预构造 NPZ。
     if parquet_path.exists():
-        x, codes = build_sequences_from_panel(parquet_path, config, trade_date)
+        x, codes = build_sequences_from_panel(parquet_path, config, feature_date)
         source = str(parquet_path)
     else:
-        x, codes = load_live_npz(npz_path, config, trade_date)
+        x, codes = load_live_npz(npz_path, config, feature_date)
         source = str(npz_path)
 
     device = resolve_device(args.device)
@@ -149,6 +154,7 @@ def main() -> None:
         out_dir / f"manifest_{trade_date}.json",
         {
             "trade_date": trade_date,
+            "feature_date": feature_date,
             "source": source,
             "output_parquet": str(out_parquet),
             "output_csv": str(out_csv),
@@ -160,7 +166,7 @@ def main() -> None:
     )
 
     print("\n【阶段一完成】冻结模型 live inference")
-    print(f"trade_date={trade_date} rows={len(predictions)} output={out_parquet}")
+    print(f"trade_date={trade_date} feature_date={feature_date} rows={len(predictions)} output={out_parquet}")
     print("\nTop 20 预测分数：")
     print(predictions.head(20)[["ts_code", "pred_score"]].to_string(index=False))
     print("\nBottom 10 风险尾部：")

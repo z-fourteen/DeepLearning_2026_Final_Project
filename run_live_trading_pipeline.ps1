@@ -1,6 +1,18 @@
 param(
   [string]$TradeDate = (Get-Date -Format "yyyyMMdd"),
   [string]$Config = "configs/live/live_trading.yaml",
+  [string]$DataVersion = "v20260526",
+  [string]$StartDate = "20160104",
+  [string]$EndDate = "",
+  [string]$FeatureDate = "",
+  [switch]$RunDag,
+  [switch]$SkipDag,
+  [switch]$FullDag,
+  [switch]$SkipPrepareFeatures,
+  [switch]$AllowRawFeatureFallback,
+  [switch]$Execute,
+  [switch]$Reset,
+  [switch]$NoPush,
   [switch]$WaitForSchedule,
   [switch]$RunIntradayMonitor
 )
@@ -40,20 +52,61 @@ function Invoke-LiveStage {
 }
 
 Write-Host "Live trading pipeline trade_date=$TradeDate config=$Config"
+if (-not $FeatureDate) {
+  $FeatureDate = if ($EndDate) { $EndDate } else { $TradeDate }
+}
+Write-Host "Feature/data end date=$FeatureDate"
 Write-Host "Use -WaitForSchedule to enforce 08:30/09:00/09:15 wall-clock gates."
+
+if ($RunDag) {
+  $DagArgs = @(
+    "scripts/run_daily_dag.py",
+    "--data-version", $DataVersion,
+    "--start-date", $StartDate,
+    "--end-date", $FeatureDate
+  )
+  if (-not $FullDag -and -not $Reset) {
+    $DagArgs += "--incremental"
+  }
+  Invoke-LiveStage "data DAG" $DagArgs
+} elseif ($SkipDag) {
+  Write-Host "Skipping data DAG by request."
+} else {
+  Write-Host "Data DAG not requested. Use -RunDag for full/incremental refresh or -SkipDag to make this explicit."
+}
+
+if (-not $SkipPrepareFeatures) {
+  $PrepareArgs = @(
+    "scripts/live/00_prepare_live_features.py",
+    "--config", $Config,
+    "--data-version", $DataVersion,
+    "--feature-date", $FeatureDate,
+    "--output", "data/live/features/features_$FeatureDate.parquet"
+  )
+  if ($AllowRawFeatureFallback) {
+    $PrepareArgs += "--allow-raw-fallback"
+  }
+  Invoke-LiveStage "prepare live features" $PrepareArgs
+} else {
+  Write-Host "Skipping live feature preparation by request."
+}
 
 Wait-UntilClock "08:30"
 Invoke-LiveStage "08:30-09:00 inference" @(
   "scripts/live/01_live_inference.py",
   "--config", $Config,
-  "--trade-date", $TradeDate
+  "--trade-date", $TradeDate,
+  "--feature-date", $FeatureDate,
+  "--features-parquet", "data/live/features/features_$FeatureDate.parquet"
 )
 
 Wait-UntilClock "09:00"
 Invoke-LiveStage "09:00-09:15 optimization" @(
   "scripts/live/02_live_optimization.py",
   "--config", $Config,
-  "--trade-date", $TradeDate
+  "--trade-date", $TradeDate,
+  "--feature-date", $FeatureDate,
+  "--liquidity-parquet", "data/live/features/features_$FeatureDate.parquet"
 )
 
 Wait-UntilClock "09:15"
@@ -73,6 +126,25 @@ if ($RunIntradayMonitor) {
   )
 }
 
+if ($Execute) {
+  $ExecutionArgs = @(
+    "scripts/live/05_interactive_execution.py",
+    "--config", $Config,
+    "--trade-date", $TradeDate
+  )
+  if ($Reset) {
+    $ExecutionArgs += "--reset"
+  }
+  if ($NoPush) {
+    $ExecutionArgs += "--no-push"
+  }
+  Invoke-LiveStage "interactive execution" $ExecutionArgs
+}
+
 Write-Host ""
 Write-Host "Live pipeline completed. Orders:"
 Write-Host "outputs/live_orders/orders_$TradeDate.csv"
+Write-Host ""
+Write-Host "One-command forms:"
+Write-Host "  Full build:        .\run_live_trading_pipeline.ps1 -RunDag -FullDag -DataVersion $DataVersion -EndDate $FeatureDate -TradeDate $TradeDate"
+Write-Host "  Auto incremental:  .\run_live_trading_pipeline.ps1 -RunDag -DataVersion $DataVersion -EndDate $FeatureDate -TradeDate $TradeDate"

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import math
+import subprocess
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -236,3 +237,68 @@ def price_column(frame: pd.DataFrame) -> str:
             return column
     die("price snapshot must contain one of: price, last_price, open, pre_close, close")
     raise AssertionError("unreachable")
+
+
+def current_git_branch() -> str:
+    completed = subprocess.run(
+        ["git", "branch", "--show-current"],
+        cwd=PROJECT_ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+    )
+    branch = completed.stdout.strip()
+    return branch or "HEAD"
+
+
+def git_commit_and_push(
+    commit_msg: str,
+    paths: list[str | Path],
+    branch: str | None = None,
+    push: bool = True,
+) -> None:
+    resolved_paths = [str(resolve_path(path).relative_to(PROJECT_ROOT)) for path in paths]
+    subprocess.run(["git", "add", *resolved_paths], cwd=PROJECT_ROOT, check=True)
+    status = subprocess.run(
+        ["git", "status", "--short", "--", *resolved_paths],
+        cwd=PROJECT_ROOT,
+        check=True,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+    )
+    if not status.stdout.strip():
+        print("  No live state changes to commit.")
+    else:
+        commit = subprocess.run(
+            ["git", "commit", "-m", commit_msg],
+            cwd=PROJECT_ROOT,
+            check=False,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+        )
+        if commit.returncode != 0:
+            print(f"  Git commit skipped/failed: {(commit.stderr or commit.stdout).strip()}")
+            return
+        print(f"  Git commit created: {commit_msg}")
+
+    if push:
+        target_branch = branch or current_git_branch()
+        pushed = subprocess.run(
+            ["git", "push", "origin", target_branch],
+            cwd=PROJECT_ROOT,
+            check=False,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+        )
+        if pushed.returncode != 0:
+            print(f"  Git push failed: {(pushed.stderr or pushed.stdout).strip()}")
+            return
+        print(f"  Git pushed to origin/{target_branch}.")

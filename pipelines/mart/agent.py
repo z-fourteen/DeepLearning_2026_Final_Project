@@ -108,7 +108,8 @@ def read_registry(project_root: Path, config: dict[str, Any]) -> pd.DataFrame:
 
 def read_raw_dataset(project_root: Path, config: dict[str, Any], dataset: str) -> pd.DataFrame:
     registry = read_registry(project_root, config)
-    rows = registry[(registry["dataset"] == dataset) & (registry["status"] == "ingested")]
+    valid_status = registry["status"].isin(["ingested", "reused_existing"])
+    rows = registry[(registry["dataset"] == dataset) & valid_status]
     if rows.empty:
         raise ValueError(f"No raw dataset found: {dataset}")
     frames = []

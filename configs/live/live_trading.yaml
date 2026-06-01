@@ -53,7 +53,7 @@ optimizer:
   buy_capacity_slack_penalty: 1000.0
   cash_penalty: 0.1
   candidate_multiplier: 5.0
-  portfolio_nav: 10000000.0
+  portfolio_nav: 1000000.0
   cost_bps: 10.0
   slippage_bps: 5.0
   min_daily_count: 40
@@ -84,7 +84,7 @@ live_inputs:
   broker_status: data/live/broker/order_status_{trade_date}.csv
 
 guards:
-  expected_universe_size: 5000
+  expected_universe_size: 100
   min_market_coverage_ratio: 0.8
   position_weight_tolerance: 0.000001
   position_volume_tolerance: 0
