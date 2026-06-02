@@ -8,7 +8,9 @@ import numpy as np
 import pandas as pd
 import torch
 from common import (
+    apply_universe_filter,
     assert_market_coverage,
+    assert_universe,
     build_frozen_model,
     die,
     dynamic_shortfall_penalty,
@@ -21,6 +23,7 @@ from common import (
     resolve_device,
     resolve_path,
     today_yyyymmdd,
+    universe_mask,
     write_json,
 )
 
@@ -66,8 +69,16 @@ def load_live_npz(
         )
     if not np.isfinite(x).all():
         die("live npz contains NaN/Inf; refuse to infer")
-    codes = data["ts_code"].astype(str).tolist()
+    codes = data["ts_code"].astype(str)
     frame = pd.DataFrame({"ts_code": codes, "trade_date": feature_date})
+    mask = universe_mask(frame, config).to_numpy()
+    before_count = int(len(frame))
+    x = x[mask]
+    frame = frame.loc[mask].copy()
+    codes = frame["ts_code"].astype(str).tolist()
+    print(f"live npz stage 01 universe filter: stocks {before_count}->{len(codes)}")
+    if not codes:
+        die("live npz has no symbols after universe filter")
     assert_market_coverage(frame, config, "live npz")
     return x, codes
 
@@ -87,6 +98,7 @@ def build_sequences_from_panel(
     ensure_columns(
         panel, ["trade_date", "ts_code", *expected_features], "live feature panel"
     )
+    panel = apply_universe_filter(panel, config, "live feature panel stage 01")
 
     today_rows = panel[panel["trade_date"].eq(feature_date)].copy()
     assert_market_coverage(
@@ -120,6 +132,7 @@ def build_sequences_from_panel(
         die("no valid live sequences after lookback/NaN filtering")
     result = np.stack(sequences, axis=0)
     coverage_frame = pd.DataFrame({"ts_code": codes})
+    assert_universe(coverage_frame, config, "valid live sequences")
     assert_market_coverage(coverage_frame, config, "valid live sequences")
     return result, codes
 
@@ -186,6 +199,7 @@ def main() -> None:
             "model_name": config["model"]["name"],
         }
     ).sort_values("pred_score", ascending=False)
+    assert_universe(predictions, config, "live predictions")
 
     out_parquet = out_dir / f"predictions_{trade_date}.parquet"
     out_csv = out_dir / f"predictions_{trade_date}.csv"
@@ -200,6 +214,8 @@ def main() -> None:
             "output_parquet": str(out_parquet),
             "output_csv": str(out_csv),
             "rows": int(len(predictions)),
+            "stocks": int(predictions["ts_code"].nunique()),
+            "universe": config.get("universe", {}),
             "score_mean": float(predictions["pred_score"].mean()),
             "score_std": float(predictions["pred_score"].std(ddof=1)),
             "shortfall_penalty_today": dynamic_shortfall_penalty(config, trade_date),

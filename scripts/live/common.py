@@ -104,6 +104,45 @@ def ensure_columns(frame: pd.DataFrame, columns: list[str], label: str) -> None:
         die(f"{label} missing columns: {missing}")
 
 
+def universe_mask(frame: pd.DataFrame, config: dict[str, Any]) -> pd.Series:
+    if "ts_code" not in frame.columns:
+        die("universe filter requires ts_code column")
+    universe = config.get("universe", {}) or {}
+    prefixes = [str(item) for item in universe.get("allowed_prefixes", [])]
+    suffix = universe.get("allowed_suffix")
+    codes = frame["ts_code"].astype(str)
+    mask = pd.Series(True, index=frame.index)
+    if prefixes:
+        mask &= codes.str[:3].isin(prefixes)
+    if suffix:
+        mask &= codes.str.endswith(str(suffix))
+    return mask
+
+
+def apply_universe_filter(frame: pd.DataFrame, config: dict[str, Any], label: str) -> pd.DataFrame:
+    before_rows = len(frame)
+    before_stocks = int(frame["ts_code"].nunique()) if "ts_code" in frame.columns else 0
+    filtered = frame.loc[universe_mask(frame, config)].copy()
+    after_rows = len(filtered)
+    after_stocks = int(filtered["ts_code"].nunique()) if "ts_code" in filtered.columns else 0
+    name = (config.get("universe", {}) or {}).get("name", "configured")
+    print(
+        f"{label} universe={name}: rows {before_rows}->{after_rows}, "
+        f"stocks {before_stocks}->{after_stocks}"
+    )
+    if filtered.empty:
+        die(f"{label} has no rows after universe={name} filter")
+    return filtered
+
+
+def assert_universe(frame: pd.DataFrame, config: dict[str, Any], label: str) -> None:
+    bad = frame.loc[~universe_mask(frame, config), "ts_code"].astype(str).drop_duplicates()
+    if not bad.empty:
+        sample = bad.head(10).tolist()
+        name = (config.get("universe", {}) or {}).get("name", "configured")
+        die(f"{label} contains non-{name} symbols; sample={sample}")
+
+
 def trading_days(config: dict[str, Any]) -> list[str]:
     days = [str(day) for day in config.get("competition", {}).get("trading_days", [])]
     if not days:

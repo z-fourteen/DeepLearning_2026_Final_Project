@@ -79,6 +79,7 @@ if (-not $SkipPrepareFeatures) {
     "scripts/live/00_prepare_live_features.py",
     "--config", $Config,
     "--data-version", $DataVersion,
+    "--trade-date", $TradeDate,
     "--feature-date", $FeatureDate,
     "--output", "data/live/features/features_$FeatureDate.parquet"
   )

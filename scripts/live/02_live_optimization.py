@@ -7,7 +7,9 @@ import numpy as np
 import pandas as pd
 
 from common import (
+    apply_universe_filter,
     assert_position_inheritance,
+    assert_universe,
     die,
     dynamic_shortfall_penalty,
     format_path,
@@ -44,7 +46,7 @@ def amount_column(frame: pd.DataFrame) -> str:
     raise AssertionError("unreachable")
 
 
-def load_live_liquidity(path, trade_date: str) -> pd.DataFrame:
+def load_live_liquidity(path, trade_date: str, config: dict) -> pd.DataFrame:
     path = resolve_path(path)
     if not path.exists():
         die(f"missing live liquidity/feature parquet: {path}")
@@ -53,6 +55,7 @@ def load_live_liquidity(path, trade_date: str) -> pd.DataFrame:
     if "trade_date" in frame.columns:
         frame["trade_date"] = frame["trade_date"].astype(str).str.replace("-", "", regex=False)
         frame = frame[frame["trade_date"].eq(trade_date)].copy()
+    frame = apply_universe_filter(frame, config, "live liquidity stage 02")
     amount_col = amount_column(frame)
     frame["next_amount"] = pd.to_numeric(frame[amount_col], errors="coerce").fillna(0.0)
     for src, dst in [
@@ -69,11 +72,18 @@ def load_live_liquidity(path, trade_date: str) -> pd.DataFrame:
     return frame[["ts_code", "next_amount", "buy_executable_t1_open", "sell_executable_t1_open"]].drop_duplicates("ts_code")
 
 
-def build_live_day(predictions: pd.DataFrame, liquidity: pd.DataFrame, positions: pd.DataFrame, trade_date: str) -> pd.DataFrame:
+def build_live_day(
+    predictions: pd.DataFrame,
+    liquidity: pd.DataFrame,
+    positions: pd.DataFrame,
+    trade_date: str,
+    config: dict,
+) -> pd.DataFrame:
     preds = normalize_code_column(predictions)
     preds = preds[preds["trade_date"].astype(str).str.replace("-", "", regex=False).eq(trade_date)].copy()
     if preds.empty:
         die(f"no live predictions for trade_date={trade_date}")
+    preds = apply_universe_filter(preds, config, "live predictions stage 02")
     preds["pred_score"] = pd.to_numeric(preds["pred_score"], errors="coerce")
     day = liquidity.merge(preds[["ts_code", "pred_score"]], on="ts_code", how="outer")
     current_codes = positions["ts_code"].astype(str).unique().tolist()
@@ -128,10 +138,13 @@ def main() -> None:
     predictions = pd.read_parquet(pred_path)
     current_positions = load_positions(pos_path, "current positions")
     previous_positions = load_positions(prev_pos_path, "previous close positions")
+    assert_universe(current_positions, config, "current positions")
+    assert_universe(previous_positions, config, "previous close positions")
     assert_position_inheritance(current_positions, previous_positions, config)
 
-    liquidity = load_live_liquidity(liq_path, feature_date)
-    day = build_live_day(predictions, liquidity, current_positions, trade_date)
+    liquidity = load_live_liquidity(liq_path, feature_date, config)
+    day = build_live_day(predictions, liquidity, current_positions, trade_date, config)
+    assert_universe(day, config, "optimizer live day")
     current = dict(zip(current_positions["ts_code"].astype(str), current_positions["weight"].astype(float)))
 
     opt = config["optimizer"]

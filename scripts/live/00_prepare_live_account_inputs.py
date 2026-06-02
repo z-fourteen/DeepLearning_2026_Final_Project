@@ -6,6 +6,8 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 from common import (
+    apply_universe_filter,
+    assert_universe,
     format_path,
     load_yaml,
     normalize_code_column,
@@ -17,7 +19,7 @@ from common import (
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Prepare minimal live account inputs for a first-day dry run."
+        description="Prepare minimal live account inputs and quote snapshots."
     )
     parser.add_argument("--config", default="configs/live/live_trading.yaml")
     parser.add_argument("--trade-date", default=today_yyyymmdd())
@@ -36,6 +38,95 @@ def write_if_missing(path: Path, frame: pd.DataFrame, overwrite: bool) -> None:
     print(f"wrote: {path}")
 
 
+def read_live_features(path: Path, config: dict, feature_date: str) -> pd.DataFrame:
+    if not path.exists():
+        raise FileNotFoundError(f"missing live features: {path}")
+    if str(path).endswith(".csv"):
+        features = normalize_code_column(pd.read_csv(path))
+    else:
+        features = normalize_code_column(pd.read_parquet(path))
+    features = apply_universe_filter(features, config, "account input features stage 00")
+    latest = (
+        features[features["trade_date"].astype(str).eq(feature_date)]
+        .drop_duplicates("ts_code")
+        .copy()
+    )
+    if latest.empty:
+        raise ValueError(f"no feature rows for feature_date={feature_date}")
+    return latest
+
+
+def normalize_positions(frame: pd.DataFrame, config: dict, label: str) -> pd.DataFrame:
+    frame = normalize_code_column(frame)
+    assert_universe(frame, config, label)
+    if "volume" not in frame.columns and "shares" in frame.columns:
+        frame = frame.rename(columns={"shares": "volume"})
+    if "weight" not in frame.columns:
+        frame["weight"] = 0.0
+    if "volume" not in frame.columns:
+        frame["volume"] = 0
+    frame["weight"] = pd.to_numeric(frame["weight"], errors="coerce").fillna(0.0)
+    frame["volume"] = pd.to_numeric(frame["volume"], errors="coerce").fillna(0).astype(int)
+    return frame[["ts_code", "weight", "volume"]].copy()
+
+
+def inherited_or_empty_positions(
+    previous_close_path: Path,
+    latest: pd.DataFrame,
+    config: dict,
+) -> pd.DataFrame:
+    if previous_close_path.exists():
+        inherited = normalize_positions(
+            pd.read_csv(previous_close_path),
+            config,
+            "previous close positions for account input",
+        )
+        print(f"inherit positions from: {previous_close_path}")
+        return inherited
+    codes = latest["ts_code"].astype(str).sort_values().tolist()
+    print("previous close positions missing; create empty first-day template")
+    return pd.DataFrame({"ts_code": codes, "weight": 0.0, "volume": 0})
+
+
+def attach_reference_prices(latest: pd.DataFrame, feature_date: str) -> pd.DataFrame:
+    latest = latest.copy()
+    raw_daily_path = Path("A股数据") / "daily" / f"{feature_date}.csv"
+    if "price" not in latest.columns:
+        if raw_daily_path.exists():
+            try:
+                raw_daily = normalize_code_column(pd.read_csv(raw_daily_path))
+                raw_daily["price"] = pd.to_numeric(raw_daily["close"], errors="coerce")
+                raw_prices = raw_daily[["ts_code", "price"]].drop_duplicates("ts_code")
+                latest = latest.merge(
+                    raw_prices, on="ts_code", how="left", suffixes=("_old", "")
+                )
+                if "price_old" in latest.columns:
+                    latest = latest.drop(columns=["price_old"])
+            except Exception as exc:
+                print(f"Failed to read raw prices from {raw_daily_path}: {exc}; using fallback prices.")
+                latest["price"] = np.nan
+        else:
+            latest["price"] = np.nan
+
+    missing_price = latest["price"].isna()
+    if missing_price.any():
+        if "close" in latest.columns:
+            latest.loc[missing_price, "price"] = pd.to_numeric(
+                latest.loc[missing_price, "close"], errors="coerce"
+            )
+        elif "lag1_amount_log__resid_style" in latest.columns:
+            amount_log = pd.to_numeric(
+                latest.loc[missing_price, "lag1_amount_log__resid_style"],
+                errors="coerce",
+            ).fillna(0.0)
+            latest.loc[missing_price, "price"] = (
+                10.0 + np.log1p(amount_log.clip(lower=0.0))
+            ).clip(lower=1.0)
+        else:
+            latest.loc[missing_price, "price"] = 10.0
+    return latest
+
+
 def main() -> None:
     args = parse_args()
     config = load_yaml(args.config)
@@ -52,96 +143,25 @@ def main() -> None:
             prev_trade_date=prev_trade_date,
         )
     )
-    if not feature_path.exists():
-        raise FileNotFoundError(f"missing live features: {feature_path}")
 
-    # 支持 CSV 或 Parquet 格式
-    if str(feature_path).endswith(".csv"):
-        features = normalize_code_column(pd.read_csv(feature_path))
+    latest = read_live_features(feature_path, config, feature_date)
+    previous_close_path = format_path(
+        paths["previous_close_positions"],
+        trade_date=trade_date,
+        prev_trade_date=prev_trade_date,
+    )
+    positions = inherited_or_empty_positions(previous_close_path, latest, config)
+    positions_path = format_path(
+        paths["positions"], trade_date=trade_date, prev_trade_date=prev_trade_date
+    )
+    write_if_missing(positions_path, positions, args.overwrite)
+
+    if previous_close_path.exists():
+        print(f"exists, keep previous close positions: {previous_close_path}")
     else:
-        features = normalize_code_column(pd.read_parquet(feature_path))
-    latest = (
-        features[features["trade_date"].astype(str).eq(feature_date)]
-        .drop_duplicates("ts_code")
-        .copy()
-    )
-    codes = latest["ts_code"].astype(str).sort_values().tolist()
+        write_if_missing(previous_close_path, positions, overwrite=False)
 
-    empty_positions = pd.DataFrame({"ts_code": codes, "weight": 0.0, "volume": 0})
-    write_if_missing(
-        format_path(
-            paths["positions"], trade_date=trade_date, prev_trade_date=prev_trade_date
-        ),
-        empty_positions,
-        args.overwrite,
-    )
-    write_if_missing(
-        format_path(
-            paths["previous_close_positions"],
-            trade_date=trade_date,
-            prev_trade_date=prev_trade_date,
-        ),
-        empty_positions,
-        args.overwrite,
-    )
-
-    # 优先从原始daily数据读取真实收盘价格
-    raw_daily_path = Path("A股数据/daily") / f"{feature_date}.csv"
-    if "price" not in latest.columns:
-        if raw_daily_path.exists():
-            try:
-                raw_daily = pd.read_csv(raw_daily_path)
-                raw_daily = normalize_code_column(raw_daily)
-                raw_daily["price"] = pd.to_numeric(raw_daily["close"], errors="coerce")
-                raw_prices = raw_daily[["ts_code", "price"]].drop_duplicates("ts_code")
-                latest = latest.merge(
-                    raw_prices, on="ts_code", how="left", suffixes=("_old", "")
-                )
-                # 如果merge后有price_old列，说明之前有price，保留merge的新price
-                if "price_old" in latest.columns:
-                    latest = latest.drop(columns=["price_old"])
-                # 对于没有匹配到真实价格的，使用备选方案
-                missing_price = latest["price"].isna()
-                if missing_price.any():
-                    if "close" in latest.columns:
-                        latest.loc[missing_price, "price"] = pd.to_numeric(
-                            latest.loc[missing_price, "close"], errors="coerce"
-                        )
-                    elif "lag1_amount_log__resid_style" in latest.columns:
-                        amount_log = pd.to_numeric(
-                            latest.loc[missing_price, "lag1_amount_log__resid_style"],
-                            errors="coerce",
-                        ).fillna(0.0)
-                        latest.loc[missing_price, "price"] = (
-                            10.0 + np.log1p(amount_log.clip(lower=0.0))
-                        ).clip(lower=1.0)
-                    else:
-                        latest.loc[missing_price, "price"] = 10.0
-            except Exception as e:
-                print(f"⚠️ 从 {raw_daily_path} 读取原始价格失败: {e}，使用备选方案")
-                if "close" in latest.columns:
-                    latest["price"] = pd.to_numeric(latest["close"], errors="coerce")
-                elif "lag1_amount_log__resid_style" in latest.columns:
-                    amount_log = pd.to_numeric(
-                        latest["lag1_amount_log__resid_style"], errors="coerce"
-                    ).fillna(0.0)
-                    latest["price"] = (
-                        10.0 + np.log1p(amount_log.clip(lower=0.0))
-                    ).clip(lower=1.0)
-                else:
-                    latest["price"] = 10.0
-        elif "close" in latest.columns:
-            latest["price"] = pd.to_numeric(latest["close"], errors="coerce")
-        elif "lag1_amount_log__resid_style" in latest.columns:
-            # Deterministic reference-price fallback for dry-run order sizing only.
-            amount_log = pd.to_numeric(
-                latest["lag1_amount_log__resid_style"], errors="coerce"
-            ).fillna(0.0)
-            latest["price"] = (10.0 + np.log1p(amount_log.clip(lower=0.0))).clip(
-                lower=1.0
-            )
-        else:
-            latest["price"] = 10.0
+    latest = attach_reference_prices(latest, feature_date)
     quotes = latest[["ts_code", "price"]].rename(columns={"ts_code": "code"})
     write_if_missing(
         format_path(

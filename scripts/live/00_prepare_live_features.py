@@ -11,7 +11,13 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from scripts.live.common import load_yaml, resolve_path, write_json
+from scripts.live.common import (
+    apply_universe_filter,
+    assert_market_coverage,
+    load_yaml,
+    resolve_path,
+    write_json,
+)
 
 
 def parse_args() -> argparse.Namespace:
@@ -20,6 +26,10 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--config", default="configs/live/live_trading.yaml")
     parser.add_argument("--data-version", default="v20260526")
+    parser.add_argument(
+        "--trade-date",
+        help="Trading date that will consume this feature panel. Used for universe effective-date switches.",
+    )
     parser.add_argument("--feature-date", required=True)
     parser.add_argument("--lookback", type=int)
     parser.add_argument("--mart-features", help="Override mart features parquet.")
@@ -200,9 +210,17 @@ def build_from_mart_like(panel: pd.DataFrame, feature_date: str, lookback: int, 
     return result
 
 
+def use_raw_daily_source(config: dict, trade_date: str) -> bool:
+    universe = config.get("universe", {}) or {}
+    effective_date = str(universe.get("effective_date", "99991231"))
+    source_after_effective = str(universe.get("feature_source_after_effective_date", "")).lower()
+    return source_after_effective == "raw_daily" and str(trade_date) >= effective_date
+
+
 def main() -> None:
     args = parse_args()
     config = load_yaml(args.config)
+    trade_date = str(args.trade_date or args.feature_date)
     feature_date = str(args.feature_date)
     lookback = int(args.lookback or config["model"]["lookback"])
     expected_features = [str(item) for item in config["model"]["expected_features"]]
@@ -217,18 +235,28 @@ def main() -> None:
         else PROJECT_ROOT / "data" / "mart" / "features_daily" / f"features_daily_{args.data_version}.parquet"
     )
 
+    force_raw_daily = use_raw_daily_source(config, trade_date)
     try:
+        if force_raw_daily:
+            raise RuntimeError(
+                f"trade_date={trade_date} uses raw_daily full-universe source by config"
+            )
         panel = build_from_mart(mart_path, feature_date, lookback, expected_features)
         source = str(mart_path)
         source_type = "mart"
     except Exception as exc:
-        if not args.allow_raw_fallback:
+        if not args.allow_raw_fallback and not force_raw_daily:
             raise
-        print(f"Mart feature preparation failed: {exc}", file=sys.stderr)
-        print("Falling back to raw daily CSV/parquet approximation.", file=sys.stderr)
+        print(f"Mart feature preparation skipped/failed: {exc}", file=sys.stderr)
+        print("Building live panel from raw daily CSV/parquet.", file=sys.stderr)
         panel = build_raw_fallback(feature_date, lookback, expected_features)
         source = "raw_daily_fallback"
-        source_type = "raw_fallback"
+        source_type = "raw_daily_full_universe" if force_raw_daily else "raw_fallback"
+
+    before_universe_rows = int(len(panel))
+    before_universe_stocks = int(panel["ts_code"].nunique())
+    panel = apply_universe_filter(panel, config, "live feature panel stage 00")
+    assert_market_coverage(panel[panel["trade_date"].eq(feature_date)], config, "live feature panel stage 00")
 
     output.parent.mkdir(parents=True, exist_ok=True)
     panel.to_parquet(output, index=False)
@@ -239,12 +267,16 @@ def main() -> None:
         manifest,
         {
             "feature_date": feature_date,
+            "trade_date": trade_date,
             "data_version": args.data_version,
             "lookback": lookback,
             "source": source,
             "source_type": source_type,
             "output_parquet": str(output),
             "output_csv": str(csv_output),
+            "universe": config.get("universe", {}),
+            "rows_before_universe_filter": before_universe_rows,
+            "stocks_before_universe_filter": before_universe_stocks,
             "rows": int(len(panel)),
             "stocks": int(panel["ts_code"].nunique()),
             "features": expected_features,

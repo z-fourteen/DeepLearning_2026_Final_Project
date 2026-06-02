@@ -155,6 +155,8 @@ def prepare_live_features(args: argparse.Namespace, feature_date: str, feature_p
         str(resolve_path(args.config).relative_to(PROJECT_ROOT)),
         "--data-version",
         args.data_version,
+        "--trade-date",
+        args.trade_date or "",
         "--feature-date",
         feature_date,
         "--output",

@@ -61,6 +61,15 @@ optimizer:
   shortfall_penalty_base: 500.0
   shortfall_penalty_max: 5000.0
 
+universe:
+  name: chinext_full
+  effective_date: "20260602"
+  feature_source_after_effective_date: raw_daily
+  allowed_prefixes:
+    - "300"
+    - "301"
+  allowed_suffix: ".SZ"
+
 live_inputs:
   # 标准 live panel parquet 合同：
   # trade_date, ts_code/code, 以及 model.expected_features 中全部 18 个特征列。
@@ -84,7 +93,7 @@ live_inputs:
   broker_status: data/live/broker/order_status_{trade_date}.csv
 
 guards:
-  expected_universe_size: 100
+  expected_universe_size: 1200
   min_market_coverage_ratio: 0.8
   position_weight_tolerance: 0.000001
   position_volume_tolerance: 0

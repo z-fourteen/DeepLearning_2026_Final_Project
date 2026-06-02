@@ -50,6 +50,7 @@ configs/live/live_trading.yaml
 - 18 个 live 特征的严格顺序。
 - CVXPY 生产 optimizer 参数。
 - 时间步动态短缺惩罚参数。
+- 创业板全量 universe：2026-06-02 起仅允许 `300*.SZ`、`301*.SZ`。
 - live 输入文件模板。
 - 输出目录。
 - 数据覆盖率、持仓继承、最小订单金额和整手规则。
@@ -149,7 +150,27 @@ price 或 last_price 或 open 或 pre_close 或 close
 
 ### 数据缺失断言
 
-`guards.expected_universe_size=5000`，`guards.min_market_coverage_ratio=0.8`。因此 live 数据中可用股票数低于 4000 时，脚本会立即终止并发出终端警报，不生成预测和订单。
+2026-06-02 起，实盘股票池按全创业板代码池执行，即所有 `300*.SZ`、`301*.SZ` 且能构造 60 日 live 序列的股票都进入阶段 01 推理。2026-06-01 的已成交实盘记录保持当日 Top100 候选池事实，不追溯重写。
+
+```text
+universe.name=chinext_full
+universe.effective_date=20260602
+universe.feature_source_after_effective_date=raw_daily
+universe.allowed_prefixes=300,301
+universe.allowed_suffix=.SZ
+guards.expected_universe_size=1200
+guards.min_market_coverage_ratio=0.8
+```
+
+因此，阶段 00/01/02 都会先过滤到 `300*.SZ`、`301*.SZ`；若 2026-06-02 起过滤后可用股票数低于 960，脚本会立即终止并发出终端警报，不生成后续预测、目标权重或订单。
+
+三道防线分别是：
+
+- 阶段 00：2026-06-02 起强制从 raw daily 构造全创业板 live feature panel，写入 `data/live/features/features_YYYYMMDD.parquet` 前先过滤 universe。
+- 阶段 01：即使手工指定了旧的全市场 feature/NPZ，也会在推理前过滤，并在输出 predictions 前断言。
+- 阶段 02：预测、流动性、当前持仓、上一日持仓均必须属于创业板 universe，否则优化阶段终止。
+
+本修复以 2026-06-02 作为全创业板开始日，只影响 2026-06-02 及后续交易日策略；不能覆盖已经发生的 2026-06-01 实盘成交流水。
 
 ### 持仓继承检查
 
@@ -284,6 +305,8 @@ unrealized_pnl_vs_cost = position_value - sum(shares * avg_cost)
 2026-06-01 的实盘记录按“下午初始建仓”处理。当天组合在交易前为空仓，交互端录入的 `actual_price` 均为真实买入成交价，用于形成持仓成本；这些价格不是官方收盘价，也不是用于当日盯市收益计算的估值价格。
 
 因此，2026-06-01 不确认日内 PnL，也不报告当日收益率。`outputs/live/orders/execution_20260601.json` 已合并首批建仓单和补仓单，并标注 `day_classification=initial_build`、`same_day_return_applicable=false`。若需要确认 2026-06-01 的真实交易收益，必须在收盘后通过 `06_close_valuation.py` 输入官方收盘价，生成独立估值记录。
+
+2026-06-01 的真实成交事实不追溯重写。2026-06-02 起全创业板修复只能产生新的理论信号或后续交易日信号，不能用新的理论结果覆盖 `execution_20260601.json`、`portfolio_state.json` 或 `valuation_20260601.*`。
 
 ## 最终开盘前命令
 
