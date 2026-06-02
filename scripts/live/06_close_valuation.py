@@ -15,6 +15,7 @@ from typing import Any
 import pandas as pd
 
 from common import (
+    assert_universe,
     format_path,
     load_yaml,
     normalize_code_column,
@@ -78,6 +79,10 @@ def default_daily_csv(trade_date: str) -> Path:
 
 def default_execution_log(trade_date: str) -> Path:
     return resolve_path(Path("outputs") / "live" / "orders" / f"execution_{trade_date}.json")
+
+
+def default_daily_csv(trade_date: str) -> Path:
+    return resolve_path(Path("A股数据") / "daily" / f"{trade_date}.csv")
 
 
 def load_daily_close_prices(path: Path, trade_date: str, holding_codes: set[str]) -> dict[str, float]:
@@ -308,6 +313,12 @@ def write_close_positions(frame: pd.DataFrame, config: dict[str, Any], trade_dat
     )
     out = frame[["ts_code", "weight", "shares", "market_value", "close_price"]].copy()
     out = out.rename(columns={"shares": "volume"})
+    out["volume"] = pd.to_numeric(out["volume"], errors="coerce").fillna(0).astype(int)
+    out["weight"] = pd.to_numeric(out["weight"], errors="coerce").fillna(0.0)
+    out = out[(out["volume"] > 0) | (out["weight"] > 0)].copy()
+    assert_universe(out, config, "close positions")
+    if out.empty:
+        raise ValueError("refuse to write empty close positions")
     path.parent.mkdir(parents=True, exist_ok=True)
     out.to_csv(path, index=False)
     return path
