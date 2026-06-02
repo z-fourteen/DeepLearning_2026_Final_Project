@@ -4,6 +4,7 @@ Stage 5 records real fill prices as cost basis. Stage 6 runs after the raw
 daily file is updated after market close, validates portfolio state against the
 execution log, reads official close prices, and computes mark-to-market PnL.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -13,12 +14,12 @@ from pathlib import Path
 from typing import Any
 
 import pandas as pd
-
 from common import (
     assert_universe,
     format_path,
     load_yaml,
     normalize_code_column,
+    previous_trading_day,
     resolve_path,
     today_yyyymmdd,
     write_json,
@@ -37,7 +38,9 @@ def parse_args() -> argparse.Namespace:
         "--daily-csv",
         help='Raw daily CSV updated after close. Defaults to "A股数据/daily/TRADE_DATE.csv".',
     )
-    parser.add_argument("--portfolio-state", default="outputs/live/portfolio_state.json")
+    parser.add_argument(
+        "--portfolio-state", default="outputs/live/portfolio_state.json"
+    )
     parser.add_argument(
         "--execution-log",
         help="Execution log used to validate state. Defaults to outputs/live/orders/execution_TRADE_DATE.json if it exists.",
@@ -52,6 +55,16 @@ def parse_args() -> argparse.Namespace:
         "--previous-nav",
         type=float,
         help="NAV used as the return base. Defaults to state.initial_nav on day 1, otherwise prior valuation if available.",
+    )
+    parser.add_argument(
+        "--actual-nav",
+        type=float,
+        help="Broker-reported total assets after close. If set, cash is reconciled as actual_nav - position_value.",
+    )
+    parser.add_argument(
+        "--actual-cash",
+        type=float,
+        help="Broker-reported cash after close. If set, overrides state cash for valuation.",
     )
     parser.add_argument(
         "--write-close-positions",
@@ -73,24 +86,26 @@ def load_state(path: Path) -> dict[str, Any]:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
-def default_daily_csv(trade_date: str) -> Path:
-    return resolve_path(Path("A股数据") / "daily" / f"{trade_date}.csv")
-
-
 def default_execution_log(trade_date: str) -> Path:
-    return resolve_path(Path("outputs") / "live" / "orders" / f"execution_{trade_date}.json")
+    return resolve_path(
+        Path("outputs") / "live" / "orders" / f"execution_{trade_date}.json"
+    )
 
 
 def default_daily_csv(trade_date: str) -> Path:
-    return resolve_path(Path("A股数据") / "daily" / f"{trade_date}.csv")
+    return resolve_path(Path("A\u80a1\u6570\u636e") / "daily" / f"{trade_date}.csv")
 
 
-def load_daily_close_prices(path: Path, trade_date: str, holding_codes: set[str]) -> dict[str, float]:
+def load_daily_close_prices(
+    path: Path, trade_date: str, holding_codes: set[str]
+) -> dict[str, float]:
     if not path.exists():
         raise FileNotFoundError(f"missing raw daily CSV: {path}")
     frame = normalize_code_column(pd.read_csv(path))
     if "trade_date" in frame.columns:
-        frame["trade_date"] = frame["trade_date"].astype(str).str.replace("-", "", regex=False)
+        frame["trade_date"] = (
+            frame["trade_date"].astype(str).str.replace("-", "", regex=False)
+        )
         frame = frame[frame["trade_date"].eq(str(trade_date))].copy()
     if "close" not in frame.columns:
         raise ValueError(f"raw daily CSV must contain close column: {path}")
@@ -151,14 +166,18 @@ def rebuild_state_from_execution(
         price = float(record["actual_price"])
         value = float(record.get("actual_value", shares * price) or shares * price)
 
-        current = holdings.get(code, {"shares": 0, "avg_cost": 0.0, "weight_at_entry": 0.0})
+        current = holdings.get(
+            code, {"shares": 0, "avg_cost": 0.0, "weight_at_entry": 0.0}
+        )
         old_shares = int(current["shares"])
         total_cost = old_shares * float(current["avg_cost"]) + value
         new_shares = old_shares + shares
         current["shares"] = new_shares
         current["avg_cost"] = total_cost / new_shares if new_shares > 0 else 0.0
         old_state_holding = (base_state.get("holdings") or {}).get(code, {})
-        current["weight_at_entry"] = float(old_state_holding.get("weight_at_entry", 0.0))
+        current["weight_at_entry"] = float(
+            old_state_holding.get("weight_at_entry", 0.0)
+        )
         holdings[code] = current
         cash -= value
         counted += 1
@@ -203,7 +222,9 @@ def compare_state_to_execution_state(
         actual_cost = float(actual.get("avg_cost", 0.0))
         expected_cost = float(expected.get("avg_cost", 0.0))
         if abs(actual_cost - expected_cost) > cost_tol:
-            errors.append(f"{code}: avg_cost state={actual_cost:.6f} execution={expected_cost:.6f}")
+            errors.append(
+                f"{code}: avg_cost state={actual_cost:.6f} execution={expected_cost:.6f}"
+            )
     actual_cash = float(actual_state.get("cash", 0.0))
     expected_cash = float(expected_state.get("cash", 0.0))
     if abs(actual_cash - expected_cash) > cash_tol:
@@ -219,14 +240,19 @@ def validate_or_rebuild_state(
 ) -> dict[str, Any]:
     if execution_log is None:
         if rebuild:
-            raise FileNotFoundError("cannot rebuild state because execution log is missing")
+            raise FileNotFoundError(
+                "cannot rebuild state because execution log is missing"
+            )
         return state
 
-    rebuilt = rebuild_state_from_execution(execution_log, state, trade_date)
     is_initial_build = (
         str(execution_log.get("day_classification", "")).lower() == "initial_build"
         or int(state.get("day_index", 0) or 0) <= 1
     )
+    if not is_initial_build and not rebuild:
+        return state
+
+    rebuilt = rebuild_state_from_execution(execution_log, state, trade_date)
     if rebuild:
         return rebuilt
     if is_initial_build:
@@ -241,13 +267,36 @@ def validate_or_rebuild_state(
     return state
 
 
-def choose_previous_nav(state: dict[str, Any], trade_date: str, previous_nav: float | None) -> float:
+def choose_previous_nav(
+    state: dict[str, Any],
+    config: dict[str, Any],
+    trade_date: str,
+    previous_nav: float | None,
+) -> float:
     if previous_nav is not None:
         return float(previous_nav)
     last_valuation = state.get("last_valuation") or {}
     last_nav = last_valuation.get("nav")
-    if last_nav is not None and str(last_valuation.get("trade_date")) != str(trade_date):
+    if last_nav is not None and str(last_valuation.get("trade_date")) != str(
+        trade_date
+    ):
         return float(last_nav)
+    try:
+        prev_trade_date = previous_trading_day(config, trade_date)
+    except Exception:
+        prev_trade_date = ""
+    if prev_trade_date:
+        prev_valuation_path = resolve_path(
+            Path("outputs")
+            / "live"
+            / "valuations"
+            / f"valuation_{prev_trade_date}.json"
+        )
+        if prev_valuation_path.exists():
+            prev_valuation = json.loads(prev_valuation_path.read_text(encoding="utf-8"))
+            nav = (prev_valuation.get("summary") or {}).get("nav")
+            if nav is not None:
+                return float(nav)
     return float(state.get("initial_nav", DEFAULT_NAV))
 
 
@@ -296,7 +345,9 @@ def build_valuation(
         "daily_pnl": daily_pnl,
         "daily_return": daily_pnl / previous_nav if previous_nav > 0 else None,
         "unrealized_pnl_vs_cost": position_value - cost_value,
-        "unrealized_return_vs_cost": (position_value - cost_value) / cost_value if cost_value > 0 else None,
+        "unrealized_return_vs_cost": (
+            (position_value - cost_value) / cost_value if cost_value > 0 else None
+        ),
         "position_ratio": position_value / nav if nav > 0 else None,
         "holding_count": int(len(frame)),
     }
@@ -305,7 +356,52 @@ def build_valuation(
     return frame, summary
 
 
-def write_close_positions(frame: pd.DataFrame, config: dict[str, Any], trade_date: str) -> Path:
+def reconcile_broker_cash(
+    frame: pd.DataFrame,
+    summary: dict[str, Any],
+    actual_nav: float | None,
+    actual_cash: float | None,
+) -> tuple[pd.DataFrame, dict[str, Any]]:
+    if actual_nav is None and actual_cash is None:
+        return frame, summary
+
+    summary = dict(summary)
+    frame = frame.copy()
+    original_cash = float(summary["cash"])
+    original_nav = float(summary["nav"])
+    position_value = float(summary["position_value"])
+
+    if actual_cash is not None:
+        cash = float(actual_cash)
+        nav = cash + position_value
+    else:
+        nav = float(actual_nav)
+        cash = nav - position_value
+
+    previous_nav = float(summary["previous_nav"])
+    summary["cash"] = cash
+    summary["nav"] = nav
+    summary["daily_pnl"] = nav - previous_nav
+    summary["daily_return"] = (
+        (nav - previous_nav) / previous_nav if previous_nav > 0 else None
+    )
+    summary["position_ratio"] = position_value / nav if nav > 0 else None
+    summary["cash_reconciled"] = True
+    summary["cash_reconciliation"] = {
+        "original_cash": original_cash,
+        "original_nav": original_nav,
+        "actual_nav": float(actual_nav) if actual_nav is not None else None,
+        "actual_cash": float(actual_cash) if actual_cash is not None else None,
+        "cash_adjustment": cash - original_cash,
+    }
+    if not frame.empty and nav > 0:
+        frame["weight"] = frame["market_value"] / nav
+    return frame, summary
+
+
+def write_close_positions(
+    frame: pd.DataFrame, config: dict[str, Any], trade_date: str
+) -> Path:
     path = format_path(
         config["live_inputs"]["previous_close_positions"],
         trade_date="unused",
@@ -333,7 +429,9 @@ def print_summary(frame: pd.DataFrame, summary: dict[str, Any], source: Path) ->
     print(f"  Daily PnL:       {summary['daily_pnl']:>+14,.2f}")
     print(f"  Daily return:    {summary['daily_return']:+.2%}")
     print(f"  Cash:            {summary['cash']:>14,.2f}")
-    print(f"  Position value:  {summary['position_value']:>14,.2f} ({summary['position_ratio']:.1%})")
+    print(
+        f"  Position value:  {summary['position_value']:>14,.2f} ({summary['position_ratio']:.1%})"
+    )
     print(f"  PnL vs cost:     {summary['unrealized_pnl_vs_cost']:>+14,.2f}")
     print()
     print("  ts_code        shares    avg_cost   close_price       value        pnl")
@@ -364,17 +462,26 @@ def main() -> None:
         args.rebuild_state_from_execution,
     )
     if args.rebuild_state_from_execution:
-        state_path.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
+        state_path.write_text(
+            json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
 
     holdings = state.get("holdings", {})
     if not holdings:
         raise SystemExit("portfolio has no holdings to value")
 
     holding_codes = {str(code) for code in holdings}
-    daily_csv = resolve_path(args.daily_csv) if args.daily_csv else default_daily_csv(trade_date)
+    daily_csv = (
+        resolve_path(args.daily_csv)
+        if args.daily_csv
+        else default_daily_csv(trade_date)
+    )
     close_prices = load_daily_close_prices(daily_csv, trade_date, holding_codes)
-    previous_nav = choose_previous_nav(state, trade_date, args.previous_nav)
+    previous_nav = choose_previous_nav(state, config, trade_date, args.previous_nav)
     frame, summary = build_valuation(state, close_prices, trade_date, previous_nav)
+    frame, summary = reconcile_broker_cash(
+        frame, summary, args.actual_nav, args.actual_cash
+    )
 
     out_dir = resolve_path(args.output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -387,7 +494,9 @@ def main() -> None:
             "trade_date": trade_date,
             "valuation_type": "close",
             "source": str(daily_csv),
-            "execution_log": str(execution_log_path) if execution_log is not None else None,
+            "execution_log": (
+                str(execution_log_path) if execution_log is not None else None
+            ),
             "state_rebuilt_from_execution": bool(args.rebuild_state_from_execution),
             "summary": summary,
             "positions_csv": str(csv_path),
@@ -403,6 +512,8 @@ def main() -> None:
         "daily_return": summary["daily_return"],
         "position_value": summary["position_value"],
         "cash": summary["cash"],
+        "cash_reconciled": bool(summary.get("cash_reconciled", False)),
+        "cash_reconciliation": summary.get("cash_reconciliation"),
         "source": str(daily_csv),
         "execution_log": str(execution_log_path) if execution_log is not None else None,
         "state_rebuilt_from_execution": bool(args.rebuild_state_from_execution),
@@ -410,7 +521,10 @@ def main() -> None:
         "valuation_json": str(json_path),
         "updated_at": datetime.now().isoformat(),
     }
-    state_path.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
+    state["cash"] = summary["cash"]
+    state_path.write_text(
+        json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
 
     close_positions_path = None
     if args.write_close_positions:

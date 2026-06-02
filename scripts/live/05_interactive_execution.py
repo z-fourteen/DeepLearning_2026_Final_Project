@@ -55,6 +55,8 @@ class ExecutionResult:
     actual_value: float
     status: str
     reason: str = ""
+    cost_basis: float = 0.0
+    realized_pnl: float = 0.0
 
 
 @dataclass
@@ -75,6 +77,7 @@ class PortfolioState:
     initial_nav: float = DEFAULT_NAV
     holdings: dict[str, dict[str, Any]] = field(default_factory=dict)
     pending_orders: list[dict[str, Any]] = field(default_factory=list)
+    extra: dict[str, Any] = field(default_factory=dict)
 
     def to_holdings(self) -> dict[str, Holding]:
         return {code: Holding(**vals) for code, vals in self.holdings.items()}
@@ -91,6 +94,12 @@ class PortfolioState:
     def total_nav(self, prices: dict[str, float]) -> float:
         return self.cash + self.total_position_value(prices)
 
+    def total_position_cost(self) -> float:
+        return sum(
+            float(item["shares"]) * float(item.get("avg_cost", 0.0))
+            for item in self.holdings.values()
+        )
+
     def load(self, path: Path) -> bool:
         if not path.exists():
             return False
@@ -101,21 +110,116 @@ class PortfolioState:
         self.initial_nav = float(data.get("initial_nav", DEFAULT_NAV))
         self.holdings = data.get("holdings", {})
         self.pending_orders = data.get("pending_orders", [])
+        known = {
+            "last_signal_date",
+            "day_index",
+            "cash",
+            "initial_nav",
+            "holdings",
+            "pending_orders",
+            "updated_at",
+        }
+        self.extra = {key: value for key, value in data.items() if key not in known}
         return True
 
     def save(self, path: Path) -> None:
+        payload = {
+            **self.extra,
+            "last_signal_date": self.last_signal_date,
+            "day_index": self.day_index,
+            "cash": self.cash,
+            "initial_nav": self.initial_nav,
+            "holdings": self.holdings,
+            "pending_orders": self.pending_orders,
+            "updated_at": datetime.now().isoformat(),
+        }
         write_json(
             path,
-            {
-                "last_signal_date": self.last_signal_date,
-                "day_index": self.day_index,
-                "cash": self.cash,
-                "initial_nav": self.initial_nav,
-                "holdings": self.holdings,
-                "pending_orders": self.pending_orders,
-                "updated_at": datetime.now().isoformat(),
-            },
+            payload,
         )
+
+
+def day_index_before_trade(config: dict[str, Any], prev_trade_date: str) -> int:
+    trading_days = [str(day) for day in config.get("competition", {}).get("trading_days", [])]
+    if prev_trade_date in trading_days:
+        return trading_days.index(prev_trade_date) + 1
+    return 0
+
+
+def rebuild_state_from_previous_close(
+    config: dict[str, Any],
+    trade_date: str,
+    prev_trade_date: str,
+    initial_nav: float,
+) -> PortfolioState:
+    valuation_json_path = PROJECT_ROOT / "outputs" / "live" / "valuations" / f"valuation_{prev_trade_date}.json"
+    valuation_csv_path = PROJECT_ROOT / "outputs" / "live" / "valuations" / f"valuation_{prev_trade_date}.csv"
+    if not valuation_json_path.exists() or not valuation_csv_path.exists():
+        if day_index_before_trade(config, prev_trade_date) == 0:
+            return PortfolioState(
+                last_signal_date=prev_trade_date,
+                day_index=0,
+                cash=initial_nav,
+                initial_nav=initial_nav,
+            )
+        die(
+            f"same trade_date={trade_date} requires previous close valuation files to overwrite safely: "
+            f"{valuation_json_path}, {valuation_csv_path}"
+        )
+
+    valuation = json.loads(valuation_json_path.read_text(encoding="utf-8"))
+    summary = valuation.get("summary", {}) or {}
+    frame = pd.read_csv(valuation_csv_path)
+    frame = normalize_code_column(frame)
+    holdings: dict[str, dict[str, Any]] = {}
+    for row in frame.itertuples(index=False):
+        shares = int(getattr(row, "shares", 0) or 0)
+        if shares <= 0:
+            continue
+        avg_cost = float(getattr(row, "avg_cost", 0.0) or 0.0)
+        weight = float(getattr(row, "weight", 0.0) or 0.0)
+        holdings[str(getattr(row, "ts_code"))] = asdict(
+            Holding(shares=shares, avg_cost=avg_cost, weight_at_entry=weight)
+        )
+
+    state = PortfolioState(
+        last_signal_date=prev_trade_date,
+        day_index=day_index_before_trade(config, prev_trade_date),
+        cash=float(summary.get("cash", initial_nav)),
+        initial_nav=initial_nav,
+        holdings=holdings,
+        pending_orders=[],
+    )
+    state.extra["last_valuation"] = {
+        "trade_date": prev_trade_date,
+        "valuation_type": "close",
+        "nav": summary.get("nav"),
+        "daily_pnl": summary.get("daily_pnl"),
+        "daily_return": summary.get("daily_return"),
+        "position_value": summary.get("position_value"),
+        "cash": summary.get("cash"),
+        "positions_csv": str(valuation_csv_path),
+        "valuation_json": str(valuation_json_path),
+        "source": valuation.get("source"),
+    }
+    return state
+
+
+def prepare_state_for_trade(
+    state: PortfolioState,
+    loaded: bool,
+    config: dict[str, Any],
+    trade_date: str,
+    prev_trade_date: str,
+    initial_nav: float,
+) -> PortfolioState:
+    if loaded and state.last_signal_date == trade_date:
+        print(
+            f"  Existing portfolio state already has trade_date={trade_date}; "
+            "rebuilding pre-trade state from previous close and overwriting same-day execution."
+        )
+        return rebuild_state_from_previous_close(config, trade_date, prev_trade_date, initial_nav)
+    return state
 
 
 def parse_args() -> argparse.Namespace:
@@ -232,6 +336,8 @@ def execute_one_order(order: Order, state: PortfolioState, holdings: dict[str, H
         actual_value = actual_shares * actual_price
         if actual_shares <= 0:
             return ExecutionResult(order.ts_code, "SELL", order.target_shares, 0, actual_price, 0.0, "failed", "no shares")
+        cost_basis = actual_shares * current.avg_cost
+        realized_pnl = actual_value - cost_basis
         current.shares -= actual_shares
         if current.shares <= 0:
             holdings.pop(order.ts_code, None)
@@ -252,12 +358,26 @@ def execute_one_order(order: Order, state: PortfolioState, holdings: dict[str, H
         current.avg_cost = total_cost / current.shares if current.shares > 0 else 0.0
         current.weight_at_entry = order.target_weight
         holdings[order.ts_code] = current
+        cost_basis = actual_value
+        realized_pnl = 0.0
 
     state.set_holdings(holdings)
     status = "filled" if actual_shares >= order.target_shares else "partial"
     print(f"    -> {status}: {actual_shares} shares x {actual_price:.2f} = {actual_value:,.2f}")
+    if order.action == "SELL":
+        print(f"    realized pnl: {realized_pnl:+,.2f}")
     print(f"    cash: {state.cash:,.2f}")
-    return ExecutionResult(order.ts_code, order.action, order.target_shares, actual_shares, actual_price, actual_value, status)
+    return ExecutionResult(
+        order.ts_code,
+        order.action,
+        order.target_shares,
+        actual_shares,
+        actual_price,
+        actual_value,
+        status,
+        cost_basis=cost_basis,
+        realized_pnl=realized_pnl,
+    )
 
 
 def interactive_execute_orders(orders: list[Order], state: PortfolioState) -> list[ExecutionResult]:
@@ -278,30 +398,27 @@ def interactive_execute_orders(orders: list[Order], state: PortfolioState) -> li
 
 
 def print_portfolio_summary(state: PortfolioState, prices: dict[str, float]) -> None:
-    print_header("Portfolio Summary")
+    print_header("Portfolio Cost Basis Summary")
     holdings = state.to_holdings()
-    nav = state.total_nav(prices)
-    position_value = state.total_position_value(prices)
-    position_ratio = position_value / nav if nav > 0 else 0.0
-    total_return = (nav - state.initial_nav) / state.initial_nav if state.initial_nav > 0 else 0.0
-    print(f"  NAV:             {nav:>14,.2f}")
+    position_cost = state.total_position_cost()
+    nav_by_cost = state.cash + position_cost
+    position_ratio = position_cost / nav_by_cost if nav_by_cost > 0 else 0.0
+    print("  Stage 5 records fills and cost basis only; no intraday mark-to-market PnL is recognized here.")
+    print("  Use Stage 6 after the official raw daily close is available for close valuation.")
+    print(f"  NAV by cost:     {nav_by_cost:>14,.2f}")
     print(f"  Cash:            {state.cash:>14,.2f}")
-    print(f"  Position value:  {position_value:>14,.2f} ({position_ratio:.1%})")
-    print(f"  Total return:    {total_return:+.2%}")
+    print(f"  Position cost:   {position_cost:>14,.2f} ({position_ratio:.1%})")
     print(f"  Holdings:        {len(holdings)}")
     print(f"  Day index:       {state.day_index}")
 
     if not holdings:
         return
     print()
-    print("  ts_code        shares    avg_cost    ref_price       value        pnl")
+    print("  ts_code        shares    avg_cost    cost_value")
     for code in sorted(holdings):
         holding = holdings[code]
-        price = prices.get(code, holding.avg_cost)
-        value = holding.market_value(price)
         cost = holding.shares * holding.avg_cost
-        pnl = (value - cost) / cost if cost > 0 else 0.0
-        print(f"  {code:<12} {holding.shares:>8} {holding.avg_cost:>11.3f} {price:>12.3f} {value:>11,.2f} {pnl:>+9.1%}")
+        print(f"  {code:<12} {holding.shares:>8} {holding.avg_cost:>11.3f} {cost:>13,.2f}")
 
 
 def save_execution_log(
@@ -322,7 +439,11 @@ def save_execution_log(
             "sell_failed": sum(1 for r in results if r.action == "SELL" and r.status in {"skipped", "failed"}),
             "total_buy_value": sum(r.actual_value for r in results if r.action == "BUY"),
             "total_sell_value": sum(r.actual_value for r in results if r.action == "SELL"),
+            "realized_sell_pnl": sum(r.realized_pnl for r in results if r.action == "SELL"),
             "post_cash": state.cash,
+            "post_position_cost": state.total_position_cost(),
+            "post_nav_by_cost": state.cash + state.total_position_cost(),
+            "mark_to_market_pnl_applicable": False,
         },
         "logged_at": datetime.now().isoformat(),
     }
@@ -365,6 +486,14 @@ def main() -> None:
     loaded = state.load(portfolio_state_path)
     if not loaded:
         print(f"  No prior portfolio state. Starting with NAV={args.initial_nav:,.2f}")
+    state = prepare_state_for_trade(
+        state=state,
+        loaded=loaded,
+        config=config,
+        trade_date=trade_date,
+        prev_trade_date=prev_trade_date,
+        initial_nav=args.initial_nav,
+    )
 
     if not orders_csv_path.exists():
         die(f"missing orders CSV: {orders_csv_path}")
