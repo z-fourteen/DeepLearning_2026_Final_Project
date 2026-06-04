@@ -1,23 +1,39 @@
 {
   "last_valuation": {
-    "trade_date": "20260603",
+    "trade_date": "20260604",
     "valuation_type": "close",
-    "nav": 1017931.75,
-    "daily_pnl": 10703.859999999986,
-    "daily_return": 0.010627048859816607,
-    "position_value": 1017297.0,
+    "nav": 1005254.75,
+    "daily_pnl": -12677.0,
+    "daily_return": -0.012453683658064502,
+    "position_value": 1004620.0,
     "cash": 634.75,
     "cash_reconciled": false,
     "cash_reconciliation": null,
-    "source": "D:\\05_fourteen\\ustc-life\\2026spring\\DL\\Final_Project\\A股数据\\daily\\20260603.csv",
-    "execution_log": "D:\\05_fourteen\\ustc-life\\2026spring\\DL\\Final_Project\\outputs\\live\\orders\\execution_20260603.json",
+    "source": "D:\\05_fourteen\\ustc-life\\2026spring\\DL\\Final_Project\\A股数据\\daily\\20260604.csv",
+    "execution_log": "D:\\05_fourteen\\ustc-life\\2026spring\\DL\\Final_Project\\outputs\\live\\orders\\execution_20260604.json",
     "state_rebuilt_from_execution": false,
-    "positions_csv": "D:\\05_fourteen\\ustc-life\\2026spring\\DL\\Final_Project\\outputs\\live\\valuations\\valuation_20260603.csv",
-    "valuation_json": "D:\\05_fourteen\\ustc-life\\2026spring\\DL\\Final_Project\\outputs\\live\\valuations\\valuation_20260603.json",
-    "updated_at": "2026-06-04T08:31:52.255481"
+    "positions_csv": "D:\\05_fourteen\\ustc-life\\2026spring\\DL\\Final_Project\\outputs\\live\\valuations\\valuation_20260604.csv",
+    "valuation_json": "D:\\05_fourteen\\ustc-life\\2026spring\\DL\\Final_Project\\outputs\\live\\valuations\\valuation_20260604.json",
+    "updated_at": "2026-06-05T00:19:14.290996"
   },
-  "last_signal_date": "20260603",
-  "day_index": 3,
+  "cash_reconciliation": {
+    "calculated_cash_before_adjustment": 634.7399000010064,
+    "actual_cash": 634.75,
+    "cash_adjustment": 0.010099998993609915
+  },
+  "execution_sessions": [
+    {
+      "trade_date": "20260604",
+      "execution_tag": null,
+      "execution_log": "D:\\05_fourteen\\ustc-life\\2026spring\\DL\\Final_Project\\outputs\\live\\orders\\execution_20260604.json",
+      "same_day_mode": "overwrite",
+      "orders_csv": "D:\\05_fourteen\\ustc-life\\2026spring\\DL\\Final_Project\\outputs\\live_orders\\orders_20260604.csv",
+      "price_snapshot": "D:\\05_fourteen\\ustc-life\\2026spring\\DL\\Final_Project\\data\\live\\market\\quotes_20260604_0920.csv",
+      "logged_at": "2026-06-05T00:17:09.515603"
+    }
+  ],
+  "last_signal_date": "20260604",
+  "day_index": 4,
   "cash": 634.75,
   "initial_nav": 1000000.0,
   "holdings": {
@@ -128,9 +144,5 @@
     }
   },
   "pending_orders": [],
-  "cash_reconciliation": {
-    "calculated_cash_before_adjustment": 634.7399000010064,
-    "actual_cash": 634.75,
-    "cash_adjustment": 0.010099998993609915
-  }
+  "updated_at": "2026-06-05T00:17:09.515603"
 }
