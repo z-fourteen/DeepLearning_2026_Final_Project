@@ -56,6 +56,9 @@ optimizer:
   portfolio_nav: 1000000.0
   cost_bps: 10.0
   slippage_bps: 5.0
+  commission_bps: 3.0
+  transfer_bps: 0.2
+  sell_stamp_tax_bps: 5.0
   min_daily_count: 40
   solver: CLARABEL
   shortfall_penalty_base: 500.0

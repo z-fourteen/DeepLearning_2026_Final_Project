@@ -278,6 +278,59 @@ def price_column(frame: pd.DataFrame) -> str:
     raise AssertionError("unreachable")
 
 
+def resolve_portfolio_nav(
+    config: dict[str, Any],
+    trade_date: str,
+    prev_trade_date: str,
+    *,
+    positions: pd.DataFrame | None = None,
+    portfolio_state_path: str | Path | None = None,
+    explicit_nav: float | None = None,
+) -> tuple[float, str]:
+    if explicit_nav is not None:
+        nav = float(explicit_nav)
+        if nav <= 0:
+            die(f"--portfolio-nav must be positive, got {nav}")
+        return nav, "explicit"
+
+    if positions is not None and "nav" in positions.columns:
+        nav_values = pd.to_numeric(positions["nav"], errors="coerce").dropna()
+        nav_values = nav_values[nav_values > 0]
+        if not nav_values.empty:
+            return float(nav_values.iloc[0]), "positions.nav"
+
+    state_path = (
+        resolve_path(portfolio_state_path)
+        if portfolio_state_path
+        else PROJECT_ROOT / "outputs" / "live" / "portfolio_state.json"
+    )
+    if state_path.exists():
+        state = json.loads(state_path.read_text(encoding="utf-8"))
+        last_valuation = state.get("last_valuation") or {}
+        if str(last_valuation.get("trade_date")) == str(prev_trade_date):
+            nav = last_valuation.get("nav")
+            if nav is not None and float(nav) > 0:
+                return float(nav), f"portfolio_state.last_valuation[{prev_trade_date}]"
+
+    valuation_path = (
+        PROJECT_ROOT
+        / "outputs"
+        / "live"
+        / "valuations"
+        / f"valuation_{prev_trade_date}.json"
+    )
+    if valuation_path.exists():
+        valuation = json.loads(valuation_path.read_text(encoding="utf-8"))
+        nav = (valuation.get("summary") or {}).get("nav")
+        if nav is not None and float(nav) > 0:
+            return float(nav), f"valuation_{prev_trade_date}.json"
+
+    nav = float((config.get("optimizer") or {}).get("portfolio_nav", 0.0))
+    if nav <= 0:
+        die("optimizer.portfolio_nav must be positive when no live NAV source is available")
+    return nav, "optimizer.portfolio_nav"
+
+
 def current_git_branch() -> str:
     completed = subprocess.run(
         ["git", "branch", "--show-current"],

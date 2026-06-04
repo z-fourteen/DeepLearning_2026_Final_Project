@@ -13,6 +13,7 @@ from common import (
     normalize_code_column,
     price_column,
     previous_trading_day,
+    resolve_portfolio_nav,
     resolve_path,
     today_yyyymmdd,
     write_json,
@@ -26,6 +27,15 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--target-weights")
     parser.add_argument("--positions")
     parser.add_argument("--price-snapshot")
+    parser.add_argument(
+        "--portfolio-nav",
+        type=float,
+        help="Current NAV used to convert target weights into shares. Defaults to live state/previous close valuation.",
+    )
+    parser.add_argument(
+        "--output-tag",
+        help="Optional suffix for intraday/variant order files, e.g. midday -> orders_DATE_midday.csv.",
+    )
     return parser.parse_args()
 
 
@@ -156,6 +166,13 @@ def add_min_invested_topup_orders(
     }
 
 
+def tagged_name(base: str, trade_date: str, tag: str | None, ext: str) -> str:
+    if not tag:
+        return f"{base}_{trade_date}.{ext}"
+    safe_tag = "".join(ch if ch.isalnum() or ch in {"-", "_"} else "_" for ch in str(tag))
+    return f"{base}_{trade_date}_{safe_tag}.{ext}"
+
+
 def main() -> None:
     args = parse_args()
     trade_date = str(args.trade_date)
@@ -165,7 +182,12 @@ def main() -> None:
     guards = config["guards"]
     opt = config["optimizer"]
 
-    target_path = resolve_path(args.target_weights) if args.target_weights else resolve_path(config["outputs"]["targets_dir"]) / f"target_weights_{trade_date}.csv"
+    target_path = (
+        resolve_path(args.target_weights)
+        if args.target_weights
+        else resolve_path(config["outputs"]["targets_dir"])
+        / tagged_name("target_weights", trade_date, args.output_tag, "csv")
+    )
     pos_path = resolve_path(args.positions) if args.positions else format_path(paths["positions"], trade_date=trade_date, prev_trade_date=prev_trade_date)
     price_path = resolve_path(args.price_snapshot) if args.price_snapshot else format_path(paths["price_snapshot"], trade_date=trade_date, prev_trade_date=prev_trade_date)
 
@@ -196,7 +218,13 @@ def main() -> None:
     frame["current_weight"] = pd.to_numeric(frame["current_weight"], errors="coerce").fillna(0.0)
     frame["target_weight"] = pd.to_numeric(frame["target_weight"], errors="coerce").fillna(0.0)
 
-    nav = float(opt["portfolio_nav"])
+    nav, nav_source = resolve_portfolio_nav(
+        config,
+        trade_date,
+        prev_trade_date,
+        positions=positions,
+        explicit_nav=args.portfolio_nav,
+    )
     lot_size = int(guards.get("lot_size", 100))
     min_order_value = float(guards.get("min_order_value", 1000.0))
     min_invested = float(opt.get("min_invested", 0.0))
@@ -238,19 +266,22 @@ def main() -> None:
     orders_frame = pd.DataFrame(orders)
     out_dir = resolve_path(config["outputs"]["orders_dir"])
     out_dir.mkdir(parents=True, exist_ok=True)
-    out_csv = out_dir / f"orders_{trade_date}.csv"
+    out_csv = out_dir / tagged_name("orders", trade_date, args.output_tag, "csv")
     orders_frame.to_csv(out_csv, index=False)
     buy_value = float(orders_frame.loc[orders_frame["action"].eq("BUY"), "target_value"].sum()) if not orders_frame.empty else 0.0
     sell_value = float(orders_frame.loc[orders_frame["action"].eq("SELL"), "target_value"].sum()) if not orders_frame.empty else 0.0
     write_json(
-        out_dir / f"manifest_{trade_date}.json",
+        out_dir / tagged_name("manifest", trade_date, args.output_tag, "json"),
         {
             "trade_date": trade_date,
+            "output_tag": args.output_tag,
             "orders": str(out_csv),
             "order_count": int(len(orders_frame)),
             "buy_value": buy_value,
             "sell_value": sell_value,
             "price_snapshot": str(price_path),
+            "portfolio_nav": nav,
+            "portfolio_nav_source": nav_source,
             "min_invested": min_invested,
             "required_invested_value": float(topup_stats["required_value"]),
             "rounded_invested_value_before_topup": float(topup_stats["before_topup_invested_value"]),
@@ -262,6 +293,7 @@ def main() -> None:
 
     print("\n【阶段三完成】目标调仓差分明细")
     print(f"trade_date={trade_date} output={out_csv}")
+    print(f"portfolio_nav={nav:,.2f} source={nav_source}")
     print(f"BUY value={buy_value:,.2f} SELL value={sell_value:,.2f} order_count={len(orders_frame)}")
     print(
         "rounded invested: "

@@ -17,6 +17,7 @@ from common import (
     load_yaml,
     normalize_code_column,
     previous_trading_day,
+    resolve_portfolio_nav,
     resolve_path,
     today_yyyymmdd,
     write_json,
@@ -35,6 +36,20 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--positions")
     parser.add_argument("--previous-close-positions")
     parser.add_argument("--liquidity-parquet")
+    parser.add_argument(
+        "--portfolio-nav",
+        type=float,
+        help="Current NAV used for liquidity capacity. Defaults to live state/previous close valuation.",
+    )
+    parser.add_argument(
+        "--skip-position-inheritance-check",
+        action="store_true",
+        help="Allow intraday replanning from a fresh account snapshot instead of previous close positions.",
+    )
+    parser.add_argument(
+        "--output-tag",
+        help="Optional suffix for intraday/variant target files, e.g. midday -> target_weights_DATE_midday.csv.",
+    )
     return parser.parse_args()
 
 
@@ -114,6 +129,13 @@ def build_live_day(
     return day
 
 
+def tagged_name(base: str, trade_date: str, tag: str | None, ext: str) -> str:
+    if not tag:
+        return f"{base}_{trade_date}.{ext}"
+    safe_tag = "".join(ch if ch.isalnum() or ch in {"-", "_"} else "_" for ch in str(tag))
+    return f"{base}_{trade_date}_{safe_tag}.{ext}"
+
+
 def main() -> None:
     args = parse_args()
     from scripts.portfolio.optimize_feasible_cash_buffer import prepare_lp_universe, solve_day_lp
@@ -140,7 +162,10 @@ def main() -> None:
     previous_positions = load_positions(prev_pos_path, "previous close positions")
     assert_universe(current_positions, config, "current positions")
     assert_universe(previous_positions, config, "previous close positions")
-    assert_position_inheritance(current_positions, previous_positions, config)
+    if args.skip_position_inheritance_check:
+        print("skip position inheritance check: intraday account snapshot mode")
+    else:
+        assert_position_inheritance(current_positions, previous_positions, config)
 
     liquidity = load_live_liquidity(liq_path, feature_date, config)
     day = build_live_day(predictions, liquidity, current_positions, trade_date, config)
@@ -148,6 +173,14 @@ def main() -> None:
     current = dict(zip(current_positions["ts_code"].astype(str), current_positions["weight"].astype(float)))
 
     opt = config["optimizer"]
+    portfolio_nav, portfolio_nav_source = resolve_portfolio_nav(
+        config,
+        trade_date,
+        prev_trade_date,
+        positions=current_positions,
+        explicit_nav=args.portfolio_nav,
+    )
+    print(f"portfolio_nav={portfolio_nav:,.2f} source={portfolio_nav_source}")
     shortfall_penalty = dynamic_shortfall_penalty(config, trade_date)
     current_invested = float(sum(max(0.0, weight) for weight in current.values()))
     configured_turnover_cap = float(opt["turnover_cap"])
@@ -164,7 +197,7 @@ def main() -> None:
         candidate_multiplier=float(opt["candidate_multiplier"]),
         min_invested=float(opt["min_invested"]),
         single_name_cap=float(opt["single_name_cap"]),
-        portfolio_nav=float(opt["portfolio_nav"]),
+        portfolio_nav=portfolio_nav,
         participation_cap=float(opt["participation_cap"]),
     )
     weights, stats = solve_day_lp(
@@ -178,7 +211,7 @@ def main() -> None:
         single_name_cap=float(opt["single_name_cap"]),
         min_invested=float(opt["min_invested"]),
         turnover_cap=effective_turnover_cap,
-        portfolio_nav=float(opt["portfolio_nav"]),
+        portfolio_nav=portfolio_nav,
         participation_cap=float(opt["participation_cap"]),
         exposure_slack_penalty=float(opt["exposure_slack_penalty"]),
         buy_capacity_slack_penalty=float(opt["buy_capacity_slack_penalty"]),
@@ -197,14 +230,20 @@ def main() -> None:
 
     out_dir = resolve_path(config["outputs"]["targets_dir"])
     out_dir.mkdir(parents=True, exist_ok=True)
-    out_csv = out_dir / f"target_weights_{trade_date}.csv"
+    out_csv = out_dir / tagged_name("target_weights", trade_date, args.output_tag, "csv")
     target.to_csv(out_csv, index=False)
     write_json(
-        out_dir / f"manifest_{trade_date}.json",
+        out_dir / tagged_name("manifest", trade_date, args.output_tag, "json"),
         {
             "trade_date": trade_date,
             "feature_date": feature_date,
             "prev_trade_date": prev_trade_date,
+            "output_tag": args.output_tag,
+            "intraday_account_snapshot": bool(args.skip_position_inheritance_check),
+            "positions": str(pos_path),
+            "previous_close_positions": str(prev_pos_path),
+            "portfolio_nav": portfolio_nav,
+            "portfolio_nav_source": portfolio_nav_source,
             "target_weights": str(out_csv),
             "optimizer": opt,
             "configured_turnover_cap": configured_turnover_cap,
