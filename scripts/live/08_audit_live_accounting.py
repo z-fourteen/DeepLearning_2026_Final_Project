@@ -64,11 +64,12 @@ def apply_execution(
             continue
         code = str(record["ts_code"])
         value = shares * price
+        fee = float(record.get("fee", 0.0) or 0.0)
         action = str(record.get("action", "")).upper()
         if action == "SELL":
             current = holdings.get(code, {"shares": 0, "avg_cost": 0.0})
             current["shares"] = int(current["shares"]) - shares
-            cash += value
+            cash += value - fee
             if int(current["shares"]) <= 0:
                 holdings.pop(code, None)
             else:
@@ -76,13 +77,13 @@ def apply_execution(
         elif action == "BUY":
             current = holdings.get(code, {"shares": 0, "avg_cost": 0.0})
             old_shares = int(current["shares"])
-            total_cost = old_shares * float(current["avg_cost"]) + value
+            total_cost = old_shares * float(current["avg_cost"]) + value + fee
             new_shares = old_shares + shares
             holdings[code] = {
                 "shares": new_shares,
                 "avg_cost": total_cost / new_shares if new_shares > 0 else 0.0,
             }
-            cash -= value
+            cash -= value + fee
     return holdings, cash
 
 
