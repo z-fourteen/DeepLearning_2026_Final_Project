@@ -4,6 +4,7 @@ import argparse
 import json
 import subprocess
 import sys
+from datetime import datetime
 from pathlib import Path
 
 import yaml
@@ -72,14 +73,36 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--skip-mart", action="store_true")
     parser.add_argument("--skip-validate", action="store_true")
     parser.add_argument(
+        "--rebuild-mart",
+        action="store_true",
+        help=(
+            "In incremental mode, explicitly rebuild mart for the supplied "
+            "date range. By default incremental runs skip mart to avoid an "
+            "accidental full historical rebuild."
+        ),
+    )
+    parser.add_argument(
+        "--max-incremental-mart-days",
+        type=int,
+        default=90,
+        help="Safety guard for --incremental --rebuild-mart date ranges.",
+    )
+    parser.add_argument(
         "--incremental",
         action="store_true",
         help=(
             "Daily incremental mode: ingest detects changed source files, "
-            "pool is skipped, state builds missing/raw-newer dates, and mart is rebuilt."
+            "pool is skipped, state builds missing/raw-newer dates, and mart is skipped "
+            "unless --rebuild-mart is set."
         ),
     )
     return parser.parse_args()
+
+
+def yyyymmdd_span_days(start_date: str, end_date: str) -> int:
+    start = datetime.strptime(str(start_date), "%Y%m%d")
+    end = datetime.strptime(str(end_date), "%Y%m%d")
+    return (end - start).days + 1
 
 
 def main() -> None:
@@ -90,6 +113,16 @@ def main() -> None:
 
     if args.incremental and not args.skip_pool and not pool_missing:
         args.skip_pool = True
+    if args.incremental and not args.skip_mart and not args.rebuild_mart:
+        args.skip_mart = True
+    if args.incremental and args.rebuild_mart and not args.skip_mart:
+        span_days = yyyymmdd_span_days(args.start_date, args.end_date)
+        if span_days > int(args.max_incremental_mart_days):
+            raise RuntimeError(
+                "Refuse incremental mart rebuild over a large date range: "
+                f"{args.start_date}..{args.end_date} spans {span_days} calendar days. "
+                "Use a narrower --start-date or raise --max-incremental-mart-days deliberately."
+            )
 
     if not args.skip_ingest:
         results.append(run_step("ingest_raw", ["scripts/data/run_ingest_raw.py", "--data-version", args.data_version]))
@@ -150,7 +183,12 @@ def main() -> None:
             )
         )
     else:
-        results.append(skipped_step("build_mart"))
+        reason = (
+            "incremental mode; mart skipped to avoid accidental full historical rebuild"
+            if args.incremental and not args.rebuild_mart
+            else "skipped by flag"
+        )
+        results.append(skipped_step("build_mart", reason))
 
     mode = "incremental" if args.incremental else "full"
     print(
