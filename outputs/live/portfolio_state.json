@@ -1,0 +1,136 @@
+{
+  "last_valuation": {
+    "trade_date": "20260603",
+    "valuation_type": "close",
+    "nav": 1017931.75,
+    "daily_pnl": 10703.859999999986,
+    "daily_return": 0.010627048859816607,
+    "position_value": 1017297.0,
+    "cash": 634.75,
+    "cash_reconciled": false,
+    "cash_reconciliation": null,
+    "source": "D:\\05_fourteen\\ustc-life\\2026spring\\DL\\Final_Project\\A股数据\\daily\\20260603.csv",
+    "execution_log": "D:\\05_fourteen\\ustc-life\\2026spring\\DL\\Final_Project\\outputs\\live\\orders\\execution_20260603.json",
+    "state_rebuilt_from_execution": false,
+    "positions_csv": "D:\\05_fourteen\\ustc-life\\2026spring\\DL\\Final_Project\\outputs\\live\\valuations\\valuation_20260603.csv",
+    "valuation_json": "D:\\05_fourteen\\ustc-life\\2026spring\\DL\\Final_Project\\outputs\\live\\valuations\\valuation_20260603.json",
+    "updated_at": "2026-06-04T08:31:52.255481"
+  },
+  "last_signal_date": "20260603",
+  "day_index": 3,
+  "cash": 634.75,
+  "initial_nav": 1000000.0,
+  "holdings": {
+    "300012.SZ": {
+      "shares": 600,
+      "avg_cost": 14.42,
+      "weight_at_entry": 0.0086137408288009
+    },
+    "300033.SZ": {
+      "shares": 100,
+      "avg_cost": 228.02,
+      "weight_at_entry": 0.0898426273720438
+    },
+    "300209.SZ": {
+      "shares": 4000,
+      "avg_cost": 25.67539727999975,
+      "weight_at_entry": 0.0446413373243665
+    },
+    "300302.SZ": {
+      "shares": 1600,
+      "avg_cost": 48.88307399999999,
+      "weight_at_entry": 0.050903078150467
+    },
+    "300347.SZ": {
+      "shares": 100,
+      "avg_cost": 39.52,
+      "weight_at_entry": 0.0155635086713097
+    },
+    "300383.SZ": {
+      "shares": 400,
+      "avg_cost": 13.58,
+      "weight_at_entry": 0.0308956893558616
+    },
+    "300548.SZ": {
+      "shares": 400,
+      "avg_cost": 220.14,
+      "weight_at_entry": 0.093166602048718
+    },
+    "300632.SZ": {
+      "shares": 900,
+      "avg_cost": 26.5,
+      "weight_at_entry": 0.0247600371749038
+    },
+    "300672.SZ": {
+      "shares": 300,
+      "avg_cost": 312.45,
+      "weight_at_entry": 0.0936193297824586
+    },
+    "300721.SZ": {
+      "shares": 800,
+      "avg_cost": 32.45139,
+      "weight_at_entry": 0.009519196296282
+    },
+    "300724.SZ": {
+      "shares": 800,
+      "avg_cost": 78.69,
+      "weight_at_entry": 0.0900451634634541
+    },
+    "300750.SZ": {
+      "shares": 100,
+      "avg_cost": 420.59,
+      "weight_at_entry": 0.0861552791196042
+    },
+    "300759.SZ": {
+      "shares": 600,
+      "avg_cost": 24.52,
+      "weight_at_entry": 0.0143204930514781
+    },
+    "300835.SZ": {
+      "shares": 400,
+      "avg_cost": 182.3660352,
+      "weight_at_entry": 0.0388988434384993
+    },
+    "300857.SZ": {
+      "shares": 400,
+      "avg_cost": 237.68,
+      "weight_at_entry": 0.0935359325683485
+    },
+    "300919.SZ": {
+      "shares": 400,
+      "avg_cost": 52.04,
+      "weight_at_entry": 0.0203687767224158
+    },
+    "300959.SZ": {
+      "shares": 300,
+      "avg_cost": 216.78800426666666,
+      "weight_at_entry": 0.0223385394937783
+    },
+    "300972.SZ": {
+      "shares": 100,
+      "avg_cost": 192.54,
+      "weight_at_entry": 0.0190294571767666
+    },
+    "301308.SZ": {
+      "shares": 100,
+      "avg_cost": 512.99,
+      "weight_at_entry": 0.0515772056311903
+    },
+    "301358.SZ": {
+      "shares": 1100,
+      "avg_cost": 85.24272727272728,
+      "weight_at_entry": 0.0917150933936112
+    },
+    "301387.SZ": {
+      "shares": 100,
+      "avg_cost": 89.91,
+      "weight_at_entry": 0.0090982389298215
+    }
+  },
+  "pending_orders": [],
+  "cash_reconciliation": {
+    "calculated_cash_before_adjustment": 634.7399000010064,
+    "actual_cash": 634.75,
+    "cash_adjustment": 0.010099998993609915
+  }
+}
