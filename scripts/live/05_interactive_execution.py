@@ -34,6 +34,10 @@ LOT_SIZE = 100
 DEFAULT_NAV = 1_000_000.0
 
 
+class ExecutionAbort(RuntimeError):
+    """Raised when the operator exits stage 5 without saving changes."""
+
+
 @dataclass
 class Order:
     ts_code: str
@@ -57,6 +61,7 @@ class ExecutionResult:
     reason: str = ""
     cost_basis: float = 0.0
     realized_pnl: float = 0.0
+    fee: float = 0.0
 
 
 @dataclass
@@ -212,8 +217,15 @@ def prepare_state_for_trade(
     trade_date: str,
     prev_trade_date: str,
     initial_nav: float,
+    same_day_mode: str,
 ) -> PortfolioState:
     if loaded and state.last_signal_date == trade_date:
+        if same_day_mode == "append":
+            print(
+                f"  Existing portfolio state already has trade_date={trade_date}; "
+                "appending another same-day execution session."
+            )
+            return state
         print(
             f"  Existing portfolio state already has trade_date={trade_date}; "
             "rebuilding pre-trade state from previous close and overwriting same-day execution."
@@ -235,6 +247,16 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--price-snapshot", help="Reference price snapshot. Defaults to live_inputs.price_snapshot.")
     parser.add_argument("--initial-nav", type=float, default=DEFAULT_NAV)
     parser.add_argument("--reset", action="store_true", help="Delete existing portfolio state before execution.")
+    parser.add_argument(
+        "--same-day-mode",
+        choices=["overwrite", "append"],
+        default="overwrite",
+        help="When portfolio_state already has this trade-date, overwrite from previous close or append another intraday session.",
+    )
+    parser.add_argument(
+        "--execution-tag",
+        help="Optional suffix for execution log, e.g. midday -> execution_DATE_midday.json.",
+    )
     parser.add_argument("--no-push", action="store_true", help="Skip git commit/push after execution.")
     parser.add_argument("--push-branch", help="Branch to push. Defaults to current branch.")
     return parser.parse_args()
@@ -252,11 +274,27 @@ def ask_input(prompt: str, default: str = "") -> str:
         value = input(f"    {prompt}{suffix}: ").strip()
         return value if value else default
     except (EOFError, KeyboardInterrupt):
-        return default
+        raise ExecutionAbort("input interrupted or closed")
 
 
 def round_lot(shares: int | float) -> int:
     return max(0, int(shares) // LOT_SIZE * LOT_SIZE)
+
+
+def fee_rates(config: dict[str, Any]) -> dict[str, float]:
+    opt = config.get("optimizer", {}) or {}
+    return {
+        "commission": float(opt.get("commission_bps", 0.0)) / 10000.0,
+        "transfer": float(opt.get("transfer_bps", 0.0)) / 10000.0,
+        "sell_stamp_tax": float(opt.get("sell_stamp_tax_bps", 0.0)) / 10000.0,
+    }
+
+
+def transaction_fee(action: str, value: float, rates: dict[str, float]) -> float:
+    fee = value * (rates["commission"] + rates["transfer"])
+    if action == "SELL":
+        fee += value * rates["sell_stamp_tax"]
+    return float(fee)
 
 
 def load_reference_prices(path: Path | None) -> dict[str, float]:
@@ -297,13 +335,20 @@ def orders_csv_to_order_list(orders_df: pd.DataFrame) -> list[Order]:
     return orders
 
 
-def execute_one_order(order: Order, state: PortfolioState, holdings: dict[str, Holding]) -> ExecutionResult:
+def execute_one_order(
+    order: Order,
+    state: PortfolioState,
+    holdings: dict[str, Holding],
+    rates: dict[str, float],
+) -> ExecutionResult:
     price_text = f"{order.close_price:.2f}" if order.close_price else ""
     print(f"\n  {order.action} {order.ts_code}")
     print(f"    target: {order.target_shares} shares @ {price_text or 'N/A'} ~= {order.target_value:,.2f}")
     print(f"    reason: {order.reason}")
-    print("    choices: y=filled as planned, n=skip, p=partial shares, c=custom price and shares")
+    print("    choices: y=filled as planned, n=skip, p=partial shares, c=custom price and shares, e=exit without save")
     choice = ask_input("execute", "y").lower()
+    if choice == "e":
+        raise ExecutionAbort("operator requested exit without saving")
 
     if choice == "n":
         print("    -> skipped")
@@ -329,6 +374,7 @@ def execute_one_order(order: Order, state: PortfolioState, holdings: dict[str, H
         actual_shares = order.target_shares
     actual_shares = round_lot(actual_shares)
     actual_value = actual_shares * actual_price
+    fee = transaction_fee(order.action, actual_value, rates)
 
     if order.action == "SELL":
         current = holdings.get(order.ts_code, Holding())
@@ -336,34 +382,37 @@ def execute_one_order(order: Order, state: PortfolioState, holdings: dict[str, H
         actual_value = actual_shares * actual_price
         if actual_shares <= 0:
             return ExecutionResult(order.ts_code, "SELL", order.target_shares, 0, actual_price, 0.0, "failed", "no shares")
+        fee = transaction_fee("SELL", actual_value, rates)
         cost_basis = actual_shares * current.avg_cost
-        realized_pnl = actual_value - cost_basis
+        realized_pnl = actual_value - fee - cost_basis
         current.shares -= actual_shares
         if current.shares <= 0:
             holdings.pop(order.ts_code, None)
         else:
             holdings[order.ts_code] = current
-        state.cash += actual_value
+        state.cash += actual_value - fee
     else:
-        if actual_value > state.cash:
-            actual_shares = round_lot(state.cash / actual_price)
+        if actual_value + fee > state.cash:
+            per_share_cash_cost = actual_price * (1.0 + rates["commission"] + rates["transfer"])
+            actual_shares = round_lot(state.cash / per_share_cash_cost)
             actual_value = actual_shares * actual_price
+            fee = transaction_fee("BUY", actual_value, rates)
             if actual_shares <= 0:
                 return ExecutionResult(order.ts_code, "BUY", order.target_shares, 0, actual_price, 0.0, "failed", "insufficient cash")
             print(f"    cash limited, adjusted to {actual_shares} shares")
-        state.cash -= actual_value
+        state.cash -= actual_value + fee
         current = holdings.get(order.ts_code, Holding())
-        total_cost = current.avg_cost * current.shares + actual_value
+        total_cost = current.avg_cost * current.shares + actual_value + fee
         current.shares += actual_shares
         current.avg_cost = total_cost / current.shares if current.shares > 0 else 0.0
         current.weight_at_entry = order.target_weight
         holdings[order.ts_code] = current
-        cost_basis = actual_value
+        cost_basis = actual_value + fee
         realized_pnl = 0.0
 
     state.set_holdings(holdings)
     status = "filled" if actual_shares >= order.target_shares else "partial"
-    print(f"    -> {status}: {actual_shares} shares x {actual_price:.2f} = {actual_value:,.2f}")
+    print(f"    -> {status}: {actual_shares} shares x {actual_price:.2f} = {actual_value:,.2f}, fee={fee:,.2f}")
     if order.action == "SELL":
         print(f"    realized pnl: {realized_pnl:+,.2f}")
     print(f"    cash: {state.cash:,.2f}")
@@ -377,10 +426,11 @@ def execute_one_order(order: Order, state: PortfolioState, holdings: dict[str, H
         status,
         cost_basis=cost_basis,
         realized_pnl=realized_pnl,
+        fee=fee,
     )
 
 
-def interactive_execute_orders(orders: list[Order], state: PortfolioState) -> list[ExecutionResult]:
+def interactive_execute_orders(orders: list[Order], state: PortfolioState, config: dict[str, Any]) -> list[ExecutionResult]:
     print_header("Stage 5: Interactive Execution")
     if not orders:
         print("  No executable orders. Portfolio state will still be timestamped.")
@@ -389,11 +439,17 @@ def interactive_execute_orders(orders: list[Order], state: PortfolioState) -> li
     buy_orders = [order for order in orders if order.action == "BUY"]
     print(f"  Orders: {len(sell_orders)} sells + {len(buy_orders)} buys")
     print(f"  Starting cash: {state.cash:,.2f}")
+    rates = fee_rates(config)
+    print(
+        "  Fees: "
+        f"commission={rates['commission']:.4%}, transfer={rates['transfer']:.4%}, "
+        f"sell_stamp_tax={rates['sell_stamp_tax']:.4%}"
+    )
 
     holdings = state.to_holdings()
     results: list[ExecutionResult] = []
     for order in [*sell_orders, *buy_orders]:
-        results.append(execute_one_order(order, state, holdings))
+        results.append(execute_one_order(order, state, holdings, rates))
     return results
 
 
@@ -426,9 +482,11 @@ def save_execution_log(
     execution_dir: Path,
     trade_date: str,
     state: PortfolioState,
+    execution_tag: str | None = None,
 ) -> Path:
     payload = {
         "signal_date": trade_date,
+        "execution_tag": execution_tag,
         "executions": [asdict(result) for result in results],
         "summary": {
             "buy_filled": sum(1 for r in results if r.action == "BUY" and r.status == "filled"),
@@ -439,6 +497,7 @@ def save_execution_log(
             "sell_failed": sum(1 for r in results if r.action == "SELL" and r.status in {"skipped", "failed"}),
             "total_buy_value": sum(r.actual_value for r in results if r.action == "BUY"),
             "total_sell_value": sum(r.actual_value for r in results if r.action == "SELL"),
+            "total_fees": sum(r.fee for r in results),
             "realized_sell_pnl": sum(r.realized_pnl for r in results if r.action == "SELL"),
             "post_cash": state.cash,
             "post_position_cost": state.total_position_cost(),
@@ -447,7 +506,11 @@ def save_execution_log(
         },
         "logged_at": datetime.now().isoformat(),
     }
-    path = execution_dir / f"execution_{trade_date}.json"
+    if execution_tag:
+        safe_tag = "".join(ch if ch.isalnum() or ch in {"-", "_"} else "_" for ch in str(execution_tag))
+        path = execution_dir / f"execution_{trade_date}_{safe_tag}.json"
+    else:
+        path = execution_dir / f"execution_{trade_date}.json"
     write_json(path, payload)
     print(f"\n  Execution log saved: {path}")
     return path
@@ -478,6 +541,8 @@ def main() -> None:
         if args.price_snapshot
         else format_path(live_inputs["price_snapshot"], trade_date=trade_date, prev_trade_date=prev_trade_date)
     )
+    if args.same_day_mode == "append" and not args.execution_tag:
+        die("--same-day-mode append requires --execution-tag to avoid overwriting the morning execution log")
 
     if args.reset and portfolio_state_path.exists():
         portfolio_state_path.unlink()
@@ -493,6 +558,7 @@ def main() -> None:
         trade_date=trade_date,
         prev_trade_date=prev_trade_date,
         initial_nav=args.initial_nav,
+        same_day_mode=args.same_day_mode,
     )
 
     if not orders_csv_path.exists():
@@ -500,14 +566,37 @@ def main() -> None:
     orders = orders_csv_to_order_list(pd.read_csv(orders_csv_path))
     prices = load_reference_prices(price_snapshot_path)
 
-    results = interactive_execute_orders(orders, state)
+    try:
+        results = interactive_execute_orders(orders, state, config)
+    except ExecutionAbort as exc:
+        print(f"\n  Stage 5 aborted: {exc}")
+        print("  No portfolio state or execution log was saved.")
+        return
+    append_same_day = loaded and args.same_day_mode == "append" and state.last_signal_date == trade_date
     state.last_signal_date = trade_date
-    state.day_index += 1
+    if not append_same_day:
+        state.day_index += 1
     state.save(portfolio_state_path)
     print(f"\n  Portfolio state saved: {portfolio_state_path}")
 
     print_portfolio_summary(state, prices)
-    execution_log = save_execution_log(results, execution_dir, trade_date, state)
+    execution_log = save_execution_log(results, execution_dir, trade_date, state, args.execution_tag)
+    sessions = state.extra.get("execution_sessions")
+    if not isinstance(sessions, list):
+        sessions = []
+    sessions.append(
+        {
+            "trade_date": trade_date,
+            "execution_tag": args.execution_tag,
+            "execution_log": str(execution_log),
+            "same_day_mode": args.same_day_mode,
+            "orders_csv": str(orders_csv_path),
+            "price_snapshot": str(price_snapshot_path),
+            "logged_at": datetime.now().isoformat(),
+        }
+    )
+    state.extra["execution_sessions"] = sessions
+    state.save(portfolio_state_path)
 
     if not args.no_push:
         print_header("Git Handoff")
