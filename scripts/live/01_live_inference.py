@@ -114,16 +114,29 @@ def main() -> None:
     prev_trade_date = "NA"
     input_cfg = config["live_inputs"]
 
+    # 优先使用预构造的 NPZ（已含完整 lookback 序列，适合 l20/l60 等序列模型）；
+    # 若 NPZ 不存在，再回退到 parquet 按日拼序列（仅当 parquet 含足够历史数据时可用）。
     npz_path = resolve_path(args.sequence_npz) if args.sequence_npz else format_path(input_cfg["sequence_npz"], trade_date=trade_date, prev_trade_date=prev_trade_date)
     parquet_path = resolve_path(args.features_parquet) if args.features_parquet else format_path(input_cfg["feature_panel"], trade_date=trade_date, prev_trade_date=prev_trade_date)
 
-    # 优先使用 parquet，因为比赛数据通常以日更 parquet 到达；若 parquet 缺失，则尝试使用预构造 NPZ。
-    if parquet_path.exists():
+    # 尝试 lookback 后缀的 NPZ（如 live_sequence_20260602_l60.npz），避免多模型冲突
+    lookback = int(config["model"].get("lookback", 0))
+    npz_with_lookback = npz_path.with_name(f"{npz_path.stem}_l{lookback}{npz_path.suffix}")
+
+    actual_npz = None
+    for candidate in [npz_with_lookback, npz_path]:
+        if candidate.exists():
+            actual_npz = candidate
+            break
+
+    if actual_npz:
+        x, codes = load_live_npz(actual_npz, config, trade_date)
+        source = str(actual_npz)
+    elif parquet_path.exists():
         x, codes = build_sequences_from_panel(parquet_path, config, trade_date)
         source = str(parquet_path)
     else:
-        x, codes = load_live_npz(npz_path, config, trade_date)
-        source = str(npz_path)
+        die(f"no live data found: tried NPZ={npz_with_lookback}, {npz_path}  parquet={parquet_path}")
 
     device = resolve_device(args.device)
     model = build_frozen_model(config, device)

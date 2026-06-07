@@ -36,7 +36,7 @@ model:
 
 optimizer:
   risk_control: none
-  k: 10
+  k: 20
   style_penalty: 0.1
   turnover_penalty: 0.0
   exposure_cap: 0.15

@@ -14,11 +14,11 @@ competition:
     - "20260612"
 
 model:
-  config: outputs/runs/StdTF-l60-cls-mse-f13/config.yaml
-  checkpoint: outputs/runs/StdTF-l60-cls-mse-f13/model.pt
-  name: StdTF-l60-cls-mse-f13
+  config: outputs/runs/EnhancedTF-l20-cls-huber-f13/config.yaml
+  checkpoint: outputs/runs/EnhancedTF-l20-cls-huber-f13/model.pt
+  name: EnhancedTF-l20-cls-huber-f13
   checkpoint_epoch: -1
-  lookback: 60
+  lookback: 20
   expected_features:
     - lag1_net_mf_strength_20d_mean
     - lag1_net_mf_strength_60d_mean
@@ -36,7 +36,7 @@ model:
 
 optimizer:
   risk_control: none
-  k: 10
+  k: 20
   style_penalty: 0.1
   turnover_penalty: 0.0
   exposure_cap: 0.15
