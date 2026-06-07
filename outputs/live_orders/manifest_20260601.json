@@ -1,0 +1,8 @@
+{
+  "trade_date": "20260601",
+  "orders": "D:\\YangXiran\\USTC\\0_Math\\DeepLearning\\Final\\DeepLearning_2026_Final_Project\\outputs\\live_orders\\orders_20260601.csv",
+  "order_count": 10,
+  "buy_value": 990000.0,
+  "sell_value": 0.0,
+  "price_snapshot": "D:\\YangXiran\\USTC\\0_Math\\DeepLearning\\Final\\DeepLearning_2026_Final_Project\\data\\live\\market\\quotes_20260601_0920.csv"
+}

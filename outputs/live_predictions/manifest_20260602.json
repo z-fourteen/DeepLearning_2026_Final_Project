@@ -1,0 +1,10 @@
+{
+  "trade_date": "20260602",
+  "source": "d:\\YangXiran\\USTC\\0_Math\\DeepLearning\\Final\\DeepLearning_2026_Final_Project\\data\\live\\features\\live_sequence_20260602_l20.npz",
+  "output_parquet": "D:\\YangXiran\\USTC\\0_Math\\DeepLearning\\Final\\DeepLearning_2026_Final_Project\\outputs\\live_predictions\\predictions_20260602.parquet",
+  "output_csv": "D:\\YangXiran\\USTC\\0_Math\\DeepLearning\\Final\\DeepLearning_2026_Final_Project\\outputs\\live_predictions\\predictions_20260602.csv",
+  "rows": 100,
+  "score_mean": -0.0036438717506825924,
+  "score_std": 0.0004607890441548079,
+  "shortfall_penalty_today": 555.5555555555555
+}

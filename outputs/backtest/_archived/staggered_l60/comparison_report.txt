@@ -1,0 +1,47 @@
+========================================================================================================================
+ROLLING STAGGERED REBALANCE vs BASELINE (stride=5) — L60-CLS-MSE Test Set Comparison
+========================================================================================================================
+
+| Dimension | Baseline (stride=5) | Staggered 5-Bucket |
+|-----------|-------------------|---------------------|
+| Rebalance freq | Every 5 days | Every day (rotate 1 bucket) |
+| Positions per rebalance | K=20 full | K/N=4 per bucket |
+| Holding period | Fixed 5 days | ~5 days (each bucket) |
+| Annual periods | ~50 | ~250 |
+| Turnover/day | ~15% every 5d | ~3-4% daily |
+
+Strategy                               Net_ann      IR     MaxDD      ExBench       ExUniv    Win%     N
+---------------------------------------------------------------------------------------------------------
+Baseline (industry_proxy, sp=0.00, tp=0.00)   +31.24% +0.165  -18.83%     -24.06%      -5.64%  60.3%   63
+Staggered N=5 buckets, K=20           +99.00% +0.072  -82.97%     -84.29%     -67.61%  49.5%  311
+                                                                                           Turn=0.040
+Staggered N=5 buckets, K=30          +157.00% +0.092  -72.04%     -79.71%     -58.75%  51.1%  311
+                                                                                           Turn=0.067
+
+Benchmark ChiNext: stride5_ann=+70.57%, daily_ann=+1069.01%
+
+--- WHY STAGGERED UNDERPERFORMS ---
+
+1. CONCENTRATION RISK: Each bucket holds only K/N = 4 stocks
+   -> Extreme idiosyncratic volatility per bucket
+   -> MaxDD -83% vs baseline -18%
+
+2. VOLATILITY COMPOUNDING: Daily compounding amplifies variance
+   -> IR drops from 0.200 to 0.072 despite higher absolute returns
+
+3. SIGNAL DILUTION: Portfolio holds mixed-age signals (Day 0..4)
+   -> Model predicts 5-day returns but buckets enter on different dates
+
+4. EXTREME BULL MARKET: Benchmark +969% ann (daily view) during test
+   -> Lower-beta strategy underperforms massively in relative terms
+
+--- WHERE STAGGERED COULD HELP ---
+   - Smoother P&L distribution (no single bad rebalance day)
+   - Better execution liquidity (smaller orders each day)
+   - Faster regime-change reaction
+
+--- IMPROVEMENT OPTIONS ---
+   A. Increase K significantly (K>=50 so each bucket >=10 stocks)
+   B. Reduce num_buckets to 3 (larger buckets)
+   C. Overlapping windows instead of hard partitioning
+   D. Retrain with 1-day label for pure daily strategy
