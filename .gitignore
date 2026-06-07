@@ -1,5 +1,6 @@
 # Data
 A股数据/
+data1/
 
 # Python
 __pycache__/
@@ -56,3 +57,6 @@ meta/data_versions.parquet
 meta/pool_registry.parquet
 logs/audit/*.json
 outputs/factor_validation/
+  
+# Analysis Docs
+项目分析.md
