@@ -1,5 +1,7 @@
 # Full62 Attribution Audit
 
+## English
+
 Scope: old full62 GRU score model with T+1 fill-simulation candidates.
 
 ## Execution Attribution
@@ -100,3 +102,23 @@ Scope: old full62 GRU score model with T+1 fill-simulation candidates.
 | validation | lag1_ret_20d_std | low | 14697 | -0.001108 | -0.025681 | 0.999252 | 0.000748 | 0.000068 |
 | validation | lag1_ret_20d_std | mid | 14429 | -0.001334 | -0.026619 | 0.997852 | 0.002148 | 0.000000 |
 | validation | lag1_ret_20d_std | high | 14677 | -0.000766 | -0.016337 | 0.996321 | 0.003679 | 0.000273 |
+
+## 中文
+
+范围：本文件记录旧版 `full62` GRU 打分模型在 T+1 成交仿真候选组合上的历史归因审计结果。该文件属于 `legacy_full62_v1` 只读归档，不代表当前最终主线。
+
+### 执行归因
+
+上方 `Execution Attribution` 表记录不同候选组合在 validation 和 test 切分上的收益、成本、换手、成交比例、买卖拒单和平均持仓数量。它用于解释旧版 full62 主线在加入成交约束后的表现，而不是用于当前 clean dataset 主线复现。
+
+### 风格与流动性暴露
+
+上方 `Largest Style And Liquidity Exposures` 表列出候选组合相对于可选股票池的主要风格和流动性偏离。结果显示旧版候选组合在成交金额、市值和换手相关变量上存在明显暴露，因此后续主线转向 residual-style 控制和更严格的执行审计。
+
+### 流动性分桶收益
+
+上方 `Liquidity Bucket Returns` 表按流动性、市值、换手和波动分桶统计执行收益及可买入比例。该表用于支持项目演进报告中对旧版 full62 基线局限性的说明。
+
+### 使用边界
+
+本文件只作为历史证据保留。当前实验复现请以根目录 `README.md` 和 clean dataset 主线配置为准。
