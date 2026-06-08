@@ -145,7 +145,7 @@ def query_security_state(
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Query the security daily state layer.")
-    parser.add_argument("--config", default="configs/data.yaml")
+    parser.add_argument("--config", default="configs/data/data.yaml")
     parser.add_argument("--project-root", default=".")
     parser.add_argument("--data-version", required=True)
     parser.add_argument("--start-date", required=True)

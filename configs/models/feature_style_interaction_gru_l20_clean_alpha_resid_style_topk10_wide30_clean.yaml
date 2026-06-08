@@ -1,0 +1,70 @@
+run:
+  name: "feature_style_interaction_gru_l20_clean_alpha_resid_style_topk10_wide30_clean"
+  output_dir: "outputs/runs/feature_style_interaction_gru_l20_clean_alpha_resid_style_topk10_wide30_clean"
+  seed: 42
+
+data:
+  npz_path: "data/mart/datasets/clean_purged_wf/dataset_seq_l20_adv_clean_v1_alpha_resid_style_chinext_purged_walk_forward.npz"
+  train_split: "train"
+  validation_split: "validation"
+  test_split: "test"
+  num_workers: 0
+  pin_memory: true
+
+model:
+  name: "feature_style_interaction_gru"
+  num_features: 18
+  lookback: 20
+  alpha_feature_count: 13
+  d_model: 64
+  input_dropout: 0.1
+  rnn_hidden_dim: 128
+  rnn_num_layers: 2
+  rnn_dropout: 0.2
+  style_hidden_dim: 64
+  interaction_hidden_dim: 128
+  gamma_scale: 0.50
+  beta_scale: 0.20
+  residual_scale: 0.0
+  use_style_residual_score: false
+  head_hidden_dim: 64
+  head_dropout: 0.25
+  head_activation: "leaky_relu"
+  head_negative_slope: 0.005
+
+training:
+  device: "auto"
+  batch_size: 512
+  batch_mode: "date"
+  max_epochs: 90
+  optimizer: "adamw"
+  learning_rate: 0.00025
+  weight_decay: 0.00002
+  loss_fn: "topk_band_margin_ic"
+  topk_core_k: 10
+  topk_wide_k: 30
+  topk_loss_negative_multiplier: 4
+  topk_core_margin: 0.015
+  topk_wide_margin: 0.006
+  topk_loss_temperature: 0.01
+  topk_core_weight: 1.0
+  topk_wide_weight: 0.35
+  topk_portfolio_weight: 0.5
+  topk_loss_ic_alpha: 0.15
+  topk_loss_mse_alpha: 0.005
+  ic_loss_eps: 0.000001
+  ic_loss_min_samples: 20
+  max_grad_norm: 1.0
+  scheduler: "cosine"
+  early_stop_metric: "checkpoint_score"
+  checkpoint_rank_ic_weight: 1.0
+  checkpoint_topk_weight: 2.0
+  checkpoint_dispersion_weight: 0.02
+  checkpoint_topk: 20
+  checkpoint_dispersion_floor: 0.003
+  early_stop_patience: 12
+  min_best_daily_ratio: 0.8
+  collapse_stop_patience: 2
+  collapse_stop_statuses:
+    - "prediction_collapse"
+  min_daily_count: 20

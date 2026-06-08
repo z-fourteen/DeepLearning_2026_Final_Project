@@ -1,0 +1,33 @@
+experiment:
+  name: chinext_gru_clean_dataset_v1
+  data_version: v20260526
+  benchmark: "399006.SZ"
+  label_column: label_rel_return
+  execution_label_column: execution_return_open_to_close5
+  split_name: chinext_purged_walk_forward_v1
+  feature_set: advanced_sequence_clean_v1
+
+modeling:
+  primary_model: feature_style_interaction_gru_l60_clean_alpha_resid_style_topk10_wide30_clean
+  baseline_model: gru_l20_clean_alpha_only
+  lookback: 60
+  batch_size: 384
+  max_epochs: 90
+  loss_fn: topk_band_margin_ic
+  early_stop_metric: checkpoint_score
+  frozen_checkpoint_epoch: 12
+
+execution:
+  simulator: t1_open_fill
+  holding_days: 5
+  rebalance_stride: 5
+  portfolio_nav: 10000000.0
+  participation_cap: 0.03
+  transaction_cost_bps: 10.0
+  slippage_bps: 5.0
+
+audit:
+  point_in_time: true
+  residual_alpha: true
+  capacity_sensitivity: true
+  final_optimizer_config: configs/portfolio/final_mainline_optimizer.yaml

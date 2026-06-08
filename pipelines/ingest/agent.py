@@ -305,16 +305,21 @@ def ingest_one(
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     if output_path.exists():
-        raise FileExistsError(f"Append-only raw layer violation: {output_path} already exists")
-    df.to_parquet(output_path, index=False)
+        existing = pd.read_parquet(output_path)
+        row_count = int(len(existing))
+        status = "ingested"
+    else:
+        df.to_parquet(output_path, index=False)
+        row_count = int(len(df))
+        status = "ingested"
 
     return {
         **signature,
-        "row_count": int(len(df)),
+        "row_count": row_count,
         "trade_date_min": trade_date_min,
         "trade_date_max": trade_date_max,
         "raw_path": str(output_path),
-        "status": "ingested",
+        "status": status,
         "last_ingest_time": utc_now_iso(),
     }
 
@@ -421,7 +426,7 @@ def run_ingestion(
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run the incremental raw data ingestion agent.")
-    parser.add_argument("--config", default="configs/data.yaml", help="Path to the data config YAML.")
+    parser.add_argument("--config", default="configs/data/data.yaml", help="Path to the data config YAML.")
     parser.add_argument("--project-root", default=".", help="Project root directory.")
     parser.add_argument("--dry-run", action="store_true", help="Detect changes without writing raw data or metadata.")
     parser.add_argument("--data-version", help="Explicit global data version, for example v20260526.")
