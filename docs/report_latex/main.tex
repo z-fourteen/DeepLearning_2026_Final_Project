@@ -1,0 +1,356 @@
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% --------------------------------------------------------
+% Rho
+% LaTeX Template
+% Version 2.0.0 (21/05/2024)
+%
+% Authors: 
+% Guillermo Jimenez (memo.notess1@gmail.com)
+% Eduardo Gracidas (eduardo.gracidas29@gmail.com)
+% 
+% License:
+% Creative Commons CC BY 4.0
+% --------------------------------------------------------
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\documentclass[9pt,a4paper,twoside]{rho-class/rho}
+\usepackage{ctex}
+\setbool{rho-abstract}{true} % Set false to hide the abstract
+\setbool{corres-info}{false} % Set false to hide the corresponding author section
+\setbool{linenumbers}{false} % Set false to hide the line numbering
+\usepackage{amsmath}
+\usepackage{hyperref}
+\usepackage{graphicx}
+\usepackage{float}
+
+%----------------------------------------------------------
+% TITLE
+%----------------------------------------------------------
+
+\journalname{深度学习基础实验报告}
+\title{大作业 基于深度学习的股票趋势预测与模拟交易}
+
+%----------------------------------------------------------
+% AUTHORS AND AFFILIATIONS
+%----------------------------------------------------------
+
+\author{赵国华 PB24061302，杨曦然 PB23010400，欧想想 PB24000206}
+
+%----------------------------------------------------------
+% FOOTER INFORMATION
+%----------------------------------------------------------
+
+\leadauthor{赵国华 PB24061302}
+\footinfo{深度学习基础 大作业报告}
+\smalltitle{股票趋势预测与模拟交易}
+\institution{中国科学技术大学}
+\theday{\today}
+
+%----------------------------------------------------------
+% ARTICLE INFORMATION
+%----------------------------------------------------------
+
+\corres{Provide the corresponding author information and publisher here.}
+\email{luosw@mail.ustc.edu.cn.}
+
+\received{June 01, 2026}
+\revised{June 12, 2026}
+\accepted{June 14, 2026}
+\published{June 14, 2026}
+
+\license{Rho LaTeX Class \ccLogo\ This document is licensed under Creative Commons CC BY 4.0.}
+
+%----------------------------------------------------------
+% ABSTRACT
+%----------------------------------------------------------
+
+\begin{abstract}
+    金融时间序列具有高噪声、非平稳性和复杂依赖结构等特征。本次大作业以A股市场历史量价数据为基础，构建了完整的深度学习量化交易流水线。本报告详细陈述了从数据清洗、特征工程、防范数据泄露到模型训练的全过程。我们分别独立设计并实现了门控循环单元（GRU）与自注意力机制模型（Transformer），在严格划分的验证集上进行预测表现的对比与历史回测，并使用同花顺平台进行了为期两周的实盘模拟交易。实验结果表明，深度学习模型能够一定程度上捕捉股票序列的非线性特征，但在高噪声实盘环境中，策略的稳健性、调仓成本及特征有效性对最终收益具有决定性影响。
+\end{abstract}
+
+%----------------------------------------------------------
+
+\keywords{深度学习; 股票预测; 门控循环单元 (GRU); 自注意力机制 (Transformer); 量化交易}
+
+%----------------------------------------------------------
+
+\begin{document}
+	
+    \maketitle
+    \thispagestyle{firststyle}
+    % \tableofcontents
+
+%----------------------------------------------------------
+
+\section{数据预处理与问题定义}
+
+    \subsection{原始数据清洗与股票池筛选}
+    数据流水线的第一步是将庞杂的全市场A股数据浓缩为高流动性、规则统一的成分股池：
+    \begin{itemize}
+        \item \textbf{剔除非主流标的}：严格剔除了所有 ST 股与北交所股票。原因在于 ST 股具有特殊的涨跌幅限制（5\%）且面临退市风险，北交所股票的交易门槛与流动性与主板存在显著差异，剔除它们能有效避免异常极端值对模型训练的干扰。
+        \item \textbf{缺失值的前向对齐}：股票因停牌或临时禁售会导致特定交易日的数据缺失。我们严禁使用后一天的价格进行填充（这属于未来信息），而是采用前向填充（Forward Fill）策略，即用停牌前最后一个有效交易日的收盘价和成交量代替。
+    \end{itemize}
+    \begin{rhoenv}[frametitle=填写建议：基础数据统计]
+    \textbf{建议在此处补充：} 一张简单的表格或文字描述。说明经过清洗后，你们最终保留了大约多少只股票（如约 5000 只），总计处理了多少个交易日的数据，让读者对数据规模有一个直观的认识。
+    \end{rhoenv}
+
+    \subsection{三维时间序列滑动窗口的构建}
+    传统的机器学习输入通常是二维表，而深度学习处理序列时需要构建三维张量。为了让模型能够学习到“历史如何影响未来”，我们设计了滑动窗口机制：
+    
+    对于任意一只股票，在交易日 $t$，我们截取其过去连续 $W$ 个交易日（历史特征窗口，如 $W=30$ 天）的所有量价特征（开盘、最高、最低、收盘、成交量、成交额）。通过时间轴向后滑动 1 天，就能源源不断地产生独立的训练样本。最终，送入神经网络的单个特征矩阵维度严格为：
+    \begin{equation}
+        \text{Shape} = (\text{Batch\_Size}, \text{Window\_Size}, \text{Feature\_Dim})
+    \end{equation}
+
+    \subsection{预测任务与数学因果标签的定义}
+    在明确了输入后，必须定义模型要预测的“因果目标”。本实验将任务定义为时序回归任务，预测目标并非绝对股价，而是未来 $n$ 个交易日的相对收益率。
+    
+    已知第 $t$ 日盘后更新了全部特征，模型输出预测分 $\hat{y}_t$。我们定义的客观监督标签 $y_t$ 采用第 $t+n$ 日相对于第 $t$ 日收盘价的变动率：
+    \begin{equation}
+        y_t = \frac{P_{t+n} - P_t}{P_t}
+    \end{equation}
+    其中 $P_t$ 为第 $t$ 日的收盘价。通过预测相对收益率，模型学到的是股票的阿尔法（Alpha）趋势，而非随大盘波动的绝对价格。
+
+    \subsection{时序数据集切分与数据泄露防御机制}
+    金融时序数据与传统的图像数据不同，绝对不可盲目进行随机打乱（Shuffle）。
+    \begin{enumerate}
+        \item \textbf{严格的时间轴隔离}：我们严格按照时间先后顺序将数据切分为两段。例如：2019年1月1日至2024年12月31日为“历史训练集”；2025年1月1日至2025年12月31日为“时序验证集”。这种切分方式确保了模型始终是“用过去的数据训练，在未来的数据上检验”。
+        \item \textbf{滚动标准化防御}：若对全量数据直接计算均值和方差进行归一化，2019年的数据就会包含2025年的价格高点信息，导致严重的数据泄露。因此，我们采取 \textbf{窗口内独立特征标准化}，每个滑动窗口仅利用该窗口自身的历史均值和方差进行 Z-score 缩放。
+    \end{enumerate}
+
+\section{模型架构设计与实现逻辑}
+为了捕获金融市场复杂的非线性波动特征，本实验独立设计并实现了两种具有代表性的时序深度学习模型：擅长时序递推记忆的 GRU 和擅长全局关联捕捉的 Transformer。以下对二者架构进行简单解释。
+
+    \subsection{循环序列建模：门控循环单元 (GRU)}
+    \subsubsection{通俗逻辑解构}
+    人类在阅读一段长股票K线图时，会自左向右看，边看边在脑海中总结当下的形态，并选择性地遗忘一些很久以前的无关细节。传统的循环神经网络（RNN）在序列过长时，会产生“记忆衰退（梯度消失）”的问题。
+    
+    GRU（Gate Recurrent Unit）的设计核心就是解决这个问题。它在网络内部设置了两个“看门人”：
+    \begin{itemize}
+        \item \textbf{重置门 (Reset Gate)}：决定当下的新量价进来时，过去的记忆要被抹除多少（比如股票今天突然放量暴涨，可能意味着之前的阴跌形态都不重要了，重置门就会抹除过去的部分记忆）。
+        \item \textbf{更新门 (Update Gate)}：决定有多少过去的长期记忆可以绕过当前的变换，直接汇入到未来的记忆中，起到“记忆传送带”的作用。
+    \end{itemize}
+
+    \subsubsection{数学计算流}
+    在时间步 $t$，当前输入特征为 $x_t$，前一时刻隐藏状态为 $h_{t-1}$，GRU 的具体递推公式如下：
+    \begin{align}
+        z_t &= \sigma(W_z \cdot [h_{t-1}, x_t] + b_z) \quad \text{(更新门，控制记忆保留比例)} \\
+        r_t &= \sigma(W_r \cdot [h_{t-1}, x_t] + b_r) \quad \text{(重置门，控制历史遗忘比例)} \\
+        \tilde{h}_t &= \tanh(W \cdot [r_t \ast h_{t-1}, x_t] + b_h) \quad \text{(当前候选记忆)} \\
+        h_t &= (1 - z_t) \ast h_{t-1} + z_t \ast \tilde{h}_t \quad \text{(最终输出的综合记忆)}
+    \end{align}
+    依靠这种门控机制，GRU 能够极其平滑地沿时间轴传递和过滤特征，极适合捕捉量价在短期内的连贯动量。
+
+    \subsection{全局时序注意力：自注意力机制 (Transformer)}
+    \subsubsection{通俗逻辑解构}
+    GRU 虽然优秀，但它有一个致命缺陷：必须像“接力棒”一样按顺序一步步计算，第30天的心得必须依赖第29天传递过来。如果第5天的某个暴跌事件与第30天有直接因果关系，这种长距离的信号在接力传递中很容易减弱。
+    
+    Transformer 彻底打破了这种顺序限制，它引入了“自注意力机制（Self-Attention）”。它的通俗逻辑类似于“数据库检索”或“图书馆查书”：
+    \begin{itemize}
+        \item 每一个交易日都会生成三个向量：一个去寻找关联的“检索词（Query）”、一个代表自身特征的“索引标签（Key）”、以及包含实际资产含义的“内容价值（Value）”。
+        \item 计算第30天与其他所有历史交易日之间的相关性时，让第30天的 Query 去和第1天到第29天的 Key 做点积。谁的分数高（比如发现第5天的量价形态和今天高度关联），第30天就会分配极大的“权重”直接把第5天的 Value 抓取过来。
+    \end{itemize}
+    此外，由于自注意力机制是同时并开看所有日子的，它天生失去了“谁先谁后”的概念。为此，我们在最底层必须叠加上“位置编码（Positional Encoding）”，人为给每一天的数据盖上一个“时间戳戳印”。
+
+    \subsubsection{数学计算流}
+    多头自注意力的核心计算公式如下：
+    \begin{equation}
+        \text{Attention}(Q, K, V) = \text{softmax}\left(\frac{QK^T}{\sqrt{d_k}}\right)V
+    \end{equation}
+    通过公式可以看出，任意两个交易日之间的关联度（$QK^T$）是一步计算到位的。这使得 Transformer 能够站在全局视角，敏锐捕捉大跨度时间跨度下的周期性规律与市场反转信号。
+
+    \subsubsection{从序列到标量：Transformer 的池化机制 (Pooling) 对比设计}
+    \begin{rhoenv}[frametitle=填写建议：池化机制解释]
+    \textbf{本段用于向读者解释你们在 Transformer 结构上的特殊探索。建议按以下逻辑填写：}
+    
+    “标准的 Transformer 编码器处理完 $W$ 个时间步的输入后，输出的仍然是形状为 \texttt{(W, Hidden\_Dim)} 的三维张量。但我们的预测目标是次日的单一收益率打分（标量）。因此，如何将这 $W$ 个时间步的信息‘浓缩’成一个向量，是本实验探索的核心架构维度之一。我们在实验中构建并对比了以下几种池化方式：”
+    \begin{itemize}
+        \item \textbf{Mean Pooling (全局平均池化)}：将 $W$ 个时间步的输出在时间维度上求均值，强调整段历史窗口的平均表现。
+        \item \textbf{Max Pooling (全局最大池化)}：提取每个特征维度在时间窗口内的最大值，旨在捕捉窗口内最极端的突发量价信号。
+        \item \textbf{Last Token (取最后一个时间步)}：仅提取第 $W$ 个时间步的输出向量传入全连接层。这种逻辑假设“距离当前越近的信息，对明日走势的指导意义越大”。
+    \end{itemize}
+    “具体哪种池化方式在金融时间序列中表现更优，将在第四章的实验结果中进行量化对比。”
+    \end{rhoenv}
+
+\section{模型训练流程与工程构建细节}
+\rhostart{在}实际的量化工程协作中，不同的深度学习架构往往由团队内不同的成员独立进行代码实例化与模块调试。由于 GRU 与 Transformer 的底层计算图（Computational Graph）和数据吞吐机制存在本质差异，本实验采取“分头独立构建 $\rightarrow$ 统一接口汇总”的工程路径。本章将详细拆解两套架构各自的独立训练主线，并阐述最终如何在统一的优化框架下实现工程对齐。
+
+    \subsection{门控循环单元 (GRU) 的独立训练主线}
+    本模块由主责同学独立基于 PyTorch 框架搭建，核心在于串行时序逻辑的构建与隐藏状态的隐式传递。
+    
+    \subsubsection{GRU 网络层级拓扑与张量流转}
+    GRU 的输入是经过 Z-score 滚动处理后的三维特征张量，其前向传播（Forward Propagation）的工程流水线如下：
+    \begin{enumerate}
+        \item \textbf{时序特征吞吐}：形状为 \texttt{(Batch\_Size, Window\_Size, Feature\_Dim)} 的初始化张量直接送入 \texttt{nn.GRU} 核心层。网络沿时间轴（\texttt{Window\_Size} 维度）按步递推计算。
+        \item \textbf{状态特征提取}：经过多层 GRU 堆叠计算后，输出的张量形状为 \texttt{(Batch\_Size, Window\_Size, Hidden\_Dim)}。由于 GRU 属于马尔可夫链式的时序递推结构，历史信息会自左向右自然沉淀到最后一个时间步。因此，代码中直接切片截取最后一个 Token 的输出向量：
+        \begin{equation}
+            H_{\text{last}} = \text{Output}[:, -1, :] \quad \text{Shape: } (\text{Batch\_Size}, \text{Hidden\_Dim})
+        \end{equation}
+        \item \textbf{分值线性映射}：将 $H_{\text{last}}$ 送入全连接网络（Linear Layer），最终将多维隐藏空间压缩映射为 \texttt{(Batch\_Size, 1)} 的次日相對收益率预测分。
+    \end{enumerate}
+
+    \subsubsection{GRU 独立超参数空间配置}
+    \begin{rhoenv}[frametitle=填写建议：GRU 独有超参数]
+    \textbf{请负责 GRU 的同学在此处列出你代码里实际调配的最优参数：}
+    \begin{itemize}
+        \item \textbf{隐藏层维度 (\texttt{hidden\_size})}：例如 64 或 128，决定了网络记忆股票形态的“脑容量”。
+        \item \textbf{循环层数 (\texttt{num\_layers})}：你们实际堆叠了几层 GRU（如 2 层或 3 层）。
+        \item \textbf{时序丢弃率 (\texttt{dropout})}：在循环层之间引入的 Dropout 概率（如 0.1），用于破坏噪声的协同适应。
+    \end{itemize}
+    \end{rhoenv}
+
+    \subsection{自注意力机制 (Transformer) 的独立训练主线}
+    本模块由另一位同学独立开发，由于摒弃了递归结构，其工程核心在于显式的位置关联编码以及时间截面上的池化（Pooling）特征浓缩。
+    
+    \subsubsection{Transformer 网络层级拓扑与张量流转}
+    Transformer 编码器天生具有高并发性，其前向传播的张量流转路径如下：
+    \begin{enumerate}
+        \item \textbf{升维与位置注入}：原始特征通过一个线性层进行特征升维，映射为 \texttt{(Batch\_Size, Window\_Size, d\_model)}。随后，将一个静态的、不可学习的正余弦位置编码矩阵（Positional Encoding）按元素直接相加注入，强行赋予网络关于交易日前后的时间顺序感。
+        \item \textbf{多头注意力透视}：数据送入 \texttt{nn.TransformerEncoderLayer}。经过多头自注意力（Multi-Head Attention）的并行交互，输出形状保持为 \texttt{(Batch\_Size, Window\_Size, d\_model)}。每个时间步的向量都融合了全局其他交易日的量价线索。
+        \item \textbf{池化压缩与打分}：由于所有时间步都包含了全局信息，不能简单地只取最后一个 Token。因此，本模块在此处独立设计了不同的池化（Pooling）机制（如 Mean/Max Pooling），将张量在时间维度上压缩为 \texttt{(Batch\_Size, d\_model)}，最后通过全连接层输出打分。
+    \end{enumerate}
+
+    \subsubsection{Transformer 独立超参数空间配置}
+    \begin{rhoenv}[frametitle=填写建议：Transformer 独有超参数]
+    \textbf{请负责 Transformer 的同学在此处列出你代码里实际调配的最优参数：}
+    \begin{itemize}
+        \item \textbf{词嵌入维度 (\texttt{d\_model})}：网络内部特征流转的统一基准维度（如 64）。
+        \item \textbf{多头头数 (\texttt{nhead})}：自注意力机制中并行的“观察视角”数量（如 4 或 8 头）。必须确保 \texttt{d\_model} 能被 \texttt{nhead} 整除。
+        \item \textbf{前馈网络维度 (\texttt{dim\_feedforward})}：多头注意力后紧跟的 MLP 内部隐藏层维度（通常为 \texttt{d\_model} 的 2 到 4 倍）。
+    \end{itemize}
+    \end{rhoenv}
+
+    \subsection{工程化汇总与对齐优化机制}
+    当两位同学分别将上述两套独立的模型定义代码（\texttt{nn.Module}）交付后，团队构建了统一的工程总控脚本（\texttt{train.py}），在完全相同的宿主环境下对二者进行严谨的“控制变量”对齐。
+
+    \subsubsection{参数量级与基准对齐原则}
+    为了避免因为“模型越大、参数越多、效果越好”导致的作弊对比，我们对两者的总体参数量进行了宏观对齐。通过调整 GRU 的 \texttt{hidden\_size} 和 Transformer 的 \texttt{d\_model}，使得两个模型的总参数量级（Parameters Count）控制在相似的水平线上，将竞争焦点纯粹集中在“循环时序结构”与“自注意力结构”对量价因子的提取效率上。
+
+    \subsubsection{统一的端到端训练总控流}
+    两个模型在相同的工程流水线下运行，共享完全一致的底层优化器、损失函数与过拟合防御策略：
+    \begin{itemize}
+        \item \textbf{统一的目标函数}：全部采用均方误差（MSE Loss）或 Huber Loss 作为反向传播的源头。
+        \item \textbf{统一的优化器与调度}：统一使用 AdamW 优化器（设置相同的初始学习率，如 \texttt{1e-3}），并结合余弦退火学习率策略（Cosine Annealing LR），实现动态的学习率衰减。
+        \item \textbf{统一的早停监控 (Early Stopping)}：在每轮（Epoch）训练结束后，总控脚本自动在“时序验证集”上计算验证损失。如果连续 $P$ 个 Epoch 验证集损失不再下降，则强制中断训练，并自动回滚并保存最优的权重文件（\texttt{best\_model.pth}）。
+    \end{itemize}
+
+    \subsubsection{双主线收敛性对比分析（实验现象观测）}
+    \begin{rhoenv}[frametitle=填写建议：双主线收敛差异分析]
+    \textbf{请在这里插入你们最终总控脚本跑出来的 Train/Val Loss 下降对比图，并按如下科研逻辑分析现象：}
+    \begin{enumerate}
+        \item \textbf{收敛速度对比}：通常情况下，由于 GRU 是串行递推，单次迭代计算较快，但总收敛代数可能不同；Transformer 拥有自注意力矩阵的全局计算，前期下降可能较慢，但后期可能更陡峭。请写出你们的实际观察。
+        \item \textbf{特征调整与 Pooling 带来的波动}：当负责特征的同学加入技术指标，或者负责 Transformer 的同学切换 Pooling 方式（如从 Mean 改为 Last Token）时，训练曲线有没有出现剧烈的抖动或提前过拟合（Val Loss 抬头）？请描述你们在此处观察到的工程细节。
+    \end{enumerate}
+    \end{rhoenv}
+
+\section{交易策略构建与历史回测评估}
+
+    \subsection{基于模型预测分的量化交易策略设计}
+    模型输出的连续预测分数 $\hat{y}_t$ 无法直接产生收益，必须通过一套严格的交易规则将其转化为具体标的的买卖指令。为了契合大赛要求的“每日必须满仓”以及“等权建仓”的真实约束，我们设计了 \textbf{Top-$k$ 头部聚焦多头策略}：
+    
+    \begin{figure}[H]
+        \centering
+        % \includegraphics[width=0.9\columnwidth]{strategy_flow.png}
+        \caption{量化交易策略执行流水线（评分 $\rightarrow$ 排序 $\rightarrow$ 调仓）}
+    \end{figure}
+
+    具体策略执行算法如下：
+    \begin{enumerate}
+        \item \textbf{全市场广度评分}：在每一个交易日盘后（$t$ 日 18:00 数据更新后），将市场中全部非ST、非北交所的合格股票特征输入训练好的深度学习模型，得到每只股票次日的预测得分。
+        \item \textbf{截面动态排序}：将全市场所有股票按预测打分由高到低进行绝对降序排列，构建截面得分队列。
+        \item \textbf{等权建仓与动态调仓}：
+        \begin{itemize}
+            \item 在策略执行的第一天（初始化阶段），挑选得分最高的前 $n$ 只股票（推荐 $n=20$），将初始可用资金平均分配（等权），全额满仓买入。
+            \item 在此后的每个交易日盘后，模型生成新的打分队列。若发现当前持仓中的某些股票排名跌出了前 $n$ 名，或者跌入了得分最低的后 $k$ 名（推荐 $k=3$），则在次日开盘阶段将其强制全额卖出变现。
+            \item 卖出释放出的现金，在同日立刻等额全额买入当前全市场打分最高、且尚未持有的前 $k$ 只新标的，重新使总持仓数恢复为 $n$ 只，确保每日可用现金接近于零，满足“每日满仓”的刚性比赛要求。
+        \end{itemize}
+    \end{enumerate}
+
+    \subsection{预测能力基准指标表现}
+    我们在时序验证集上对 GRU 和 Transformer 模型生成的打分进行了纯因子层面的统计检验，核心指标定义及其实际结果如下表所示：
+
+    \begin{table*}[bp]
+        \centering
+        \begin{tabular}{|c|c|c|c|}
+        \hline
+        \textbf{评估模型} & \textbf{平均 IC 值 (Information Coefficient)} & \textbf{ICIR 值 (Information Ratio)} & \textbf{方向胜率 (\%)} \\ \hline
+        \textbf{MLP 基线模型} & XXX  & XXX & XXX \% \\ \hline
+        \textbf{GRU 网络模型} & XXX  & XXX & XXX \% \\ \hline
+        \textbf{Transformer 模型} & XXX  & XXX & XXX \% \\ \hline
+        \end{tabular}
+        \caption{模型因子预测能力截面统计对比（验证期全标的平均）}
+        \label{tab:factor-eval}
+    \end{table*}
+
+    \begin{rhoenv}[frametitle=填写建议：指标金融学含义解读]
+    \textbf{在此填入指标结果时，请用以下通俗语言向读者解释指标含义：}
+    \begin{itemize}
+        \item \textbf{IC值}：代表模型预测分与股票次日真实收益率的相关系数。若为正，说明预测高分的股票确实涨得好。金融界通常认为 IC 大于 0.05 就具备了极强的可商用量化价值。
+        \item \textbf{ICIR值}：即 IC 的均值除以标准差。它衡量的是模型预测能力的“稳定性”。如果 IC 很高但波动极大，说明模型可能只是碰巧猜对了几次暴涨，ICIR 高则代表每天预测得都很稳。
+    \end{itemize}
+    \end{rhoenv}
+
+    \subsection{消融实验与多维对比分析}
+    \begin{rhoenv}[frametitle=填写建议：多维度实验结果对比]
+    \textbf{在这一节，不仅仅对比 GRU 和 Transformer，要把前面的伏笔全部收回来！建议用一张大表或者几个小节来写：}
+    \begin{enumerate}
+        \item \textbf{特征消融分析 (Feature Ablation)}：对比“仅使用基础量价” vs “加入额外技术指标”，看看增加特征后，IC 值和回测夏普比率是上升了还是下降了？分析原因。
+        \item \textbf{架构细节对比 (Architecture Ablation)}：专门对比 Transformer 的三种 Pooling 方式。哪种赚钱最多？为什么？（例如：金融序列近期记忆最重要，所以可能 Last Token 效果最好；或者全局均值能平滑噪声，表现最稳）。
+        \item \textbf{主干网络对决}：最终的 GRU vs Transformer 综合评价。
+    \end{enumerate}
+    \end{rhoenv}
+
+    \subsection{历史多空组合回测表现与对比分析}
+    我们将上述 Top-$k$ 交易策略应用在历史验证集的时间跨度内进行闭门回测（假设初始资金100万，严格考虑 T+1 限制）。以下是两模型与大盘基准（沪深300指数）的对比：
+
+    \begin{rhoenv}[frametitle=填写建议：回测三大指标与实战反思]
+    \textbf{请在此处补充你们历史回测的三个最终数字，并完成对比文字：}
+    \begin{itemize}
+        \item \textbf{年化收益率}（衡量赚钱绝对速度）、\textbf{最大回撤}（衡量最惨的时候从高点跌了多少，反映风险承受力）、\textbf{夏普比率}（每承担一分风险能换来多少超额回报，通常大于 1.0 算优秀）。
+        \item \textbf{对比文字指引}：结合具体的数字，深度剖析为什么 GRU 或者 Transformer 的表现会跑赢（或跑输）沪深300指数。例如：“Transformer 在牛市震荡期表现出了极强的长依赖捕捉能力，成功选出多只龙头股，使得年化收益率达到了 XX\%；但在市场极端风格切换时，由于最大回撤达到了 XX\%，其夏普比率受到了压制。相反，GRU 模型在控制回撤方面...”
+    \end{itemize}
+    \end{rhoenv}
+
+\section{模拟交易与结果分析}
+
+    \subsection{模拟交易流程与操作一致性}
+    自2026年6月1日至6月12日（共10个交易日），本组每日在同花顺“FDL2026”比赛中进行实盘模拟。为保证操作与深度学习模型预测结果绝对一致，我们每日盘后运行最新数据，提取次日得分最高的前 $n$ 只股票名单，并于次日交易时段严格按照等权满仓的规则执行买入与卖出委托。
+
+    \subsection{收益记录与截图证明}
+    （请在此处插入同花顺APP中的三类截图：1. 收益趋势图；2. 历史调仓记录；3. 持仓记录截屏）
+
+    \subsection{模拟交易经验总结}
+    在为期两周的模拟交易中，我们发现了理论回测与实盘操作之间的差异：
+    \begin{enumerate}
+        \item \textbf{滑点与流动性限制}：部分模型推荐的高分股票在实际盘中报单量极少，导致委托无法即刻成交，需要手动撤单并以更劣势的价格追单。
+        \item \textbf{T+1 制度约束}：A股的 T+1 制度意味着当日买入不可当日卖出。在波动剧烈的行情中，模型可能在次日开盘前就给出了卖出信号，但受限于规则无法止损。
+        \item \textbf{短期噪声主导}：两周的交易周期相对较短，在此期间市场受情绪或突发新闻影响（Noise）较大，深度学习模型提取的长期结构性特征在短线操作中可能存在滞后。
+    \end{enumerate}
+
+\section{实验总结与感悟}
+
+    \subsection{实验亮点}
+    （在此总结你们实验的闪光点，例如：是否设计了非常独特的技术指标特征？是否对 Transformer 做了针对时间序列的特殊改进？或者回测框架考虑了印花税和交易佣金等高度逼真的现实约束？）
+
+    \subsection{个人感悟与思考}
+    （赵国华）：在构建特征工程的过程中，我深刻体会到了金融数据中“信噪比”极低的特点。相较于 CV 或 NLP 任务，量化预测中数据预处理和防范泄露（如标准化方式）的严谨性甚至比模型本身更重要。
+    
+    （杨曦然）：XXX 
+    
+    （欧想想）：XXX 
+
+\section*{参考文献}
+    % 请在这里添加你们参考的论文、CSDN博客或知乎文章
+    \begin{thebibliography}{99}
+        \bibitem{vaswani2017} Vaswani, A., et al. (2017). Attention is all you need. \textit{Advances in neural information processing systems}, 30.
+        \bibitem{cho2014} Cho, K., et al. (2014). Learning phrase representations using RNN encoder-decoder for statistical machine translation. \textit{arXiv preprint arXiv:1406.1078}.
+    \end{thebibliography}
+
+\section*{附录：团队成员分工说明}
+\begin{itemize}
+    \item \textbf{赵国华 PB24061302}：负责数据获取、清洗、特征工程代码编写及防数据泄露的审查；
+    \item \textbf{杨曦然 PB23010400}：负责 GRU 与 Transformer 模型架构的搭建、训练过程调试与 Loss 优化；
+    \item \textbf{欧想想 PB24000206}：负责策略回测框架的实现、评价指标计算及同花顺每日模拟交易的盘中执行。
+\end{itemize}
+
+\end{document}
