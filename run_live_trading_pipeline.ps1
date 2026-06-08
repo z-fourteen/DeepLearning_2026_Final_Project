@@ -9,6 +9,7 @@ param(
   [switch]$SkipDag,
   [switch]$FullDag,
   [switch]$SkipPrepareFeatures,
+  [switch]$SkipPrepareAccountInputs,
   [switch]$AllowRawFeatureFallback,
   [switch]$Execute,
   [switch]$Reset,
@@ -74,21 +75,30 @@ if ($RunDag) {
   Write-Host "Data DAG not requested. Use -RunDag for full/incremental refresh or -SkipDag to make this explicit."
 }
 
-if (-not $SkipPrepareFeatures) {
-  $PrepareArgs = @(
-    "scripts/live/00_prepare_live_features.py",
-    "--config", $Config,
-    "--data-version", $DataVersion,
-    "--trade-date", $TradeDate,
-    "--feature-date", $FeatureDate,
-    "--output", "data/live/features/features_$FeatureDate.parquet"
-  )
-  if ($AllowRawFeatureFallback) {
-    $PrepareArgs += "--allow-raw-fallback"
-  }
-  Invoke-LiveStage "prepare live features" $PrepareArgs
+$PrepareInputsArgs = @(
+  "scripts/live/00_prepare_live_inputs.py",
+  "--config", $Config,
+  "--data-version", $DataVersion,
+  "--trade-date", $TradeDate,
+  "--feature-date", $FeatureDate,
+  "--features-parquet", "data/live/features/features_$FeatureDate.parquet"
+)
+if ($SkipPrepareFeatures) {
+  $PrepareInputsArgs += "--skip-prepare-features"
+}
+if ($SkipPrepareAccountInputs) {
+  $PrepareInputsArgs += "--skip-prepare-account-inputs"
+}
+if ($AllowRawFeatureFallback) {
+  $PrepareInputsArgs += "--allow-raw-fallback"
+}
+if ($Reset) {
+  $PrepareInputsArgs += "--overwrite"
+}
+if ($SkipPrepareFeatures -and $SkipPrepareAccountInputs) {
+  Write-Host "Skipping live input preparation by request."
 } else {
-  Write-Host "Skipping live feature preparation by request."
+  Invoke-LiveStage "prepare live inputs" $PrepareInputsArgs
 }
 
 Wait-UntilClock "08:30"
