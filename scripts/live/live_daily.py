@@ -7,7 +7,11 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
-from common import PROJECT_ROOT, format_path, load_yaml, resolve_path, today_yyyymmdd
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+from scripts.live.common import format_path, load_yaml, resolve_path, today_yyyymmdd
 
 
 def print_header(title: str) -> None:
@@ -84,6 +88,7 @@ Examples:
     parser.add_argument("--batch-size", type=int, default=2048)
     parser.add_argument("--features-parquet", help="Override live feature panel for stage 1.")
     parser.add_argument("--skip-prepare-features", action="store_true", help="Skip stage 0.5 live feature materialization.")
+    parser.add_argument("--skip-prepare-account-inputs", action="store_true", help="Skip current positions and quote snapshot preparation.")
     parser.add_argument(
         "--allow-raw-feature-fallback",
         action="store_true",
@@ -142,29 +147,40 @@ def default_feature_panel_path(config_path: str, feature_date: str) -> str:
     return str(path.relative_to(PROJECT_ROOT))
 
 
-def prepare_live_features(args: argparse.Namespace, feature_date: str, feature_panel: str) -> None:
-    if args.skip_prepare_features or args.features_parquet:
-        print_header("Stage 0.5: live feature preparation skipped")
-        reason = "--features-parquet override provided" if args.features_parquet else "--skip-prepare-features"
-        print(reason)
+def prepare_live_inputs(args: argparse.Namespace, trade_date: str, feature_date: str, feature_panel: str) -> None:
+    skip_features = bool(args.skip_prepare_features or args.features_parquet)
+    skip_account = bool(args.skip_prepare_account_inputs or (args.positions and args.price_snapshot))
+    if skip_features and skip_account:
+        print_header("Stage 0: live input preparation skipped")
+        if args.features_parquet:
+            print("--features-parquet override provided")
+        if args.positions and args.price_snapshot:
+            print("--positions and --price-snapshot overrides provided")
         return
+
     command = [
         sys.executable,
-        "scripts/live/00_prepare_live_features.py",
+        "scripts/live/00_prepare_live_inputs.py",
         "--config",
         str(resolve_path(args.config).relative_to(PROJECT_ROOT)),
         "--data-version",
         args.data_version,
         "--trade-date",
-        args.trade_date or "",
+        trade_date,
         "--feature-date",
         feature_date,
-        "--output",
+        "--features-parquet",
         feature_panel,
     ]
+    if skip_features:
+        command.append("--skip-prepare-features")
+    if skip_account:
+        command.append("--skip-prepare-account-inputs")
     if args.allow_raw_feature_fallback:
         command.append("--allow-raw-fallback")
-    run_command("Stage 0.5: prepare live features", command)
+    if args.reset:
+        command.append("--overwrite")
+    run_command("Stage 0: prepare live inputs", command)
 
 
 def run_live_stages(args: argparse.Namespace, trade_date: str, feature_date: str) -> None:
@@ -250,7 +266,7 @@ def main() -> None:
 
     run_data_dag(args, feature_date)
     feature_panel = args.features_parquet or default_feature_panel_path(args.config, feature_date)
-    prepare_live_features(args, feature_date, feature_panel)
+    prepare_live_inputs(args, trade_date, feature_date, feature_panel)
     run_live_stages(args, trade_date, feature_date)
 
     print_header("Live pipeline completed")

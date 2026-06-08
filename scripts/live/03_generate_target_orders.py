@@ -1,11 +1,17 @@
 from __future__ import annotations
 
 import argparse
+import sys
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
 
-from common import (
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+from scripts.live.common import (
     die,
     format_path,
     load_positions,
@@ -34,7 +40,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--output-tag",
-        help="Optional suffix for intraday/variant order files, e.g. midday -> orders_DATE_midday.csv.",
+        help="Optional suffix for variant order files, e.g. manual -> orders_DATE_manual.csv.",
     )
     return parser.parse_args()
 

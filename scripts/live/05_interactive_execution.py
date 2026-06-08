@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -16,8 +17,11 @@ from typing import Any
 
 import pandas as pd
 
-from common import (
-    PROJECT_ROOT,
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+from scripts.live.common import (
     die,
     format_path,
     git_commit_and_push,
@@ -255,7 +259,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--execution-tag",
-        help="Optional suffix for execution log, e.g. midday -> execution_DATE_midday.json.",
+        help="Optional suffix for execution log, e.g. manual -> execution_DATE_manual.json.",
     )
     parser.add_argument("--no-push", action="store_true", help="Skip git commit/push after execution.")
     parser.add_argument("--push-branch", help="Branch to push. Defaults to current branch.")

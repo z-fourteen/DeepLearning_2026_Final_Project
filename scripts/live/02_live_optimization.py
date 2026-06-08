@@ -1,12 +1,18 @@
 from __future__ import annotations
 
 import argparse
+import sys
+from pathlib import Path
 from types import SimpleNamespace
 
 import numpy as np
 import pandas as pd
 
-from common import (
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+from scripts.live.common import (
     apply_universe_filter,
     assert_position_inheritance,
     assert_universe,
@@ -48,7 +54,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--output-tag",
-        help="Optional suffix for intraday/variant target files, e.g. midday -> target_weights_DATE_midday.csv.",
+        help="Optional suffix for variant target files, e.g. manual -> target_weights_DATE_manual.csv.",
     )
     return parser.parse_args()
 
