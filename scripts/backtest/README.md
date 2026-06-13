@@ -32,6 +32,36 @@ The simulator evaluates ranking signals under open-price execution, participatio
 
 Generated backtest outputs are ignored by Git.
 
+## Transformer report runs
+
+Run the six Transformer variants with the unified 5-day T+1 fill simulator:
+
+```powershell
+.\scripts\backtest\run_transformer_t1_5d_backtests.ps1 -Python python
+```
+
+Outputs:
+
+```text
+..\Final-YXR\outputs\backtest\unified_t1_5d_transformer\<run_name>\t1_fill_periods.csv
+..\Final-YXR\outputs\backtest\unified_t1_5d_transformer\<run_name>\t1_fill_metrics.json
+```
+
+Run the same six Transformer variants with daily T+1 open rebalancing:
+
+```powershell
+.\scripts\backtest\run_transformer_daily_rebalance_backtests.ps1 -Python python
+```
+
+Outputs:
+
+```text
+..\Final-YXR\outputs\backtest\unified_daily_rebalance_transformer\<run_name>\full_topk\daily_rebalance_periods.csv
+..\Final-YXR\outputs\backtest\unified_daily_rebalance_transformer\<run_name>\full_topk\daily_rebalance_positions.csv
+..\Final-YXR\outputs\backtest\unified_daily_rebalance_transformer\<run_name>\full_topk\daily_rebalance_summary.csv
+..\Final-YXR\outputs\backtest\unified_daily_rebalance_transformer\<run_name>\full_topk\daily_rebalance_metrics.json
+```
+
 ## 中文
 
 本目录包含 T+1 执行和固定主线回测入口。
