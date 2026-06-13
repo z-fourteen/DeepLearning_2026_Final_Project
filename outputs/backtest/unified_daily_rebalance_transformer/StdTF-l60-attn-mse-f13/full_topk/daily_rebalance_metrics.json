@@ -1,0 +1,80 @@
+{
+  "inputs": {
+    "predictions": "D:\\oxx\\大学相关事情\\学习课程相关\\深度学习基础\\Final-YXR\\outputs\\runs\\StdTF-l60-attn-mse-f13\\predictions.parquet",
+    "daily_root": "D:\\oxx\\大学相关事情\\学习课程相关\\深度学习基础\\Final-OXX2\\A股数据\\daily",
+    "market_root": "D:\\oxx\\大学相关事情\\学习课程相关\\深度学习基础\\Final-OXX2\\A股数据\\market",
+    "benchmark_code": "399006.SZ",
+    "k": [
+      10,
+      20,
+      30
+    ],
+    "mode": "full_topk",
+    "replace_count": 3,
+    "split": "test",
+    "start_date": "",
+    "end_date": "",
+    "cost_bps": 10.0,
+    "slippage_bps": 5.0,
+    "min_daily_count": 40
+  },
+  "summary": {
+    "test|full_topk|k=10": {
+      "split": "test",
+      "mode": "full_topk",
+      "k": 10,
+      "period_count": 311,
+      "cumulative_return": 0.3819520401196461,
+      "benchmark_cumulative_return": 0.8946112921029408,
+      "excess_cumulative_return": -0.5126592519832947,
+      "annualized_return": 0.2996905581194387,
+      "annualized_vol": 0.306321273757167,
+      "sharpe_like": 0.9783537213840892,
+      "max_drawdown": -0.25535309998415845,
+      "win_rate": 0.5305466237942122,
+      "mean_daily_return": 0.0012292752131742711,
+      "mean_excess_return": -0.0009916421359666462,
+      "avg_turnover": 0.18029652599654714,
+      "avg_transaction_cost": 0.0002704447889948207,
+      "avg_position_count": 10.0
+    },
+    "test|full_topk|k=20": {
+      "split": "test",
+      "mode": "full_topk",
+      "k": 20,
+      "period_count": 311,
+      "cumulative_return": 0.39556522221105306,
+      "benchmark_cumulative_return": 0.8946112921029408,
+      "excess_cumulative_return": -0.4990460698918877,
+      "annualized_return": 0.3100549156494359,
+      "annualized_vol": 0.2832724229175688,
+      "sharpe_like": 1.094546770405747,
+      "max_drawdown": -0.23318789112491634,
+      "win_rate": 0.5466237942122186,
+      "mean_daily_return": 0.0012334026462643725,
+      "mean_excess_return": -0.0009875147028765448,
+      "avg_turnover": 0.14630623136125923,
+      "avg_transaction_cost": 0.0002194593470418888,
+      "avg_position_count": 20.0
+    },
+    "test|full_topk|k=30": {
+      "split": "test",
+      "mode": "full_topk",
+      "k": 30,
+      "period_count": 311,
+      "cumulative_return": 0.39288848881566474,
+      "benchmark_cumulative_return": 0.8946112921029408,
+      "excess_cumulative_return": -0.501722803287276,
+      "annualized_return": 0.30801851278949544,
+      "annualized_vol": 0.27219559545873767,
+      "sharpe_like": 1.1316072630432705,
+      "max_drawdown": -0.21448622039652399,
+      "win_rate": 0.5466237942122186,
+      "mean_daily_return": 0.0012147802160827675,
+      "mean_excess_return": -0.0010061371330581498,
+      "avg_turnover": 0.12124446065866537,
+      "avg_transaction_cost": 0.00018186669098799806,
+      "avg_position_count": 30.0
+    }
+  }
+}
