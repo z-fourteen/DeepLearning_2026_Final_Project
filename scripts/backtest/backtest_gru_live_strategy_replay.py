@@ -55,6 +55,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--slippage-bps", type=float)
     parser.add_argument("--min-daily-count", type=int)
     parser.add_argument("--solver")
+    parser.add_argument(
+        "--allow-feature-fallback",
+        action="store_true",
+        help="Use the latest available prior features_YYYYMMDD file when a requested date is missing.",
+    )
     return parser.parse_args()
 
 
@@ -119,23 +124,55 @@ def load_predictions(predictions_dir: Path, dates: list[str]) -> pd.DataFrame:
     return pd.concat(frames, ignore_index=True)
 
 
-def load_features(features_dir: Path, dates: list[str]) -> pd.DataFrame:
+def available_feature_dates(features_dir: Path) -> list[str]:
+    dates: set[str] = set()
+    for path in features_dir.glob("features_*.parquet"):
+        stem = path.stem.replace("features_", "")
+        if len(stem) == 8 and stem.isdigit():
+            dates.add(stem)
+    for path in features_dir.glob("features_*.csv"):
+        stem = path.stem.replace("features_", "")
+        if len(stem) == 8 and stem.isdigit():
+            dates.add(stem)
+    return sorted(dates)
+
+
+def resolve_feature_file(features_dir: Path, date: str, allow_fallback: bool) -> tuple[Path, str]:
+    for suffix in [".parquet", ".csv"]:
+        path = features_dir / f"features_{date}{suffix}"
+        if path.exists():
+            return path, date
+    if not allow_fallback:
+        raise FileNotFoundError(f"Missing live feature file for date={date}: {features_dir}")
+    prior = [item for item in available_feature_dates(features_dir) if item <= date]
+    if not prior:
+        raise FileNotFoundError(f"No fallback live feature file available for date={date}: {features_dir}")
+    source_date = prior[-1]
+    for suffix in [".parquet", ".csv"]:
+        path = features_dir / f"features_{source_date}{suffix}"
+        if path.exists():
+            return path, source_date
+    raise FileNotFoundError(f"No fallback live feature file available for date={date}: {features_dir}")
+
+
+def load_features(features_dir: Path, dates: list[str], allow_fallback: bool) -> tuple[pd.DataFrame, dict[str, str]]:
     frames: list[pd.DataFrame] = []
+    feature_source_by_date: dict[str, str] = {}
     for date in dates:
-        parquet_path = features_dir / f"features_{date}.parquet"
-        csv_path = features_dir / f"features_{date}.csv"
-        if parquet_path.exists():
-            frame = pd.read_parquet(parquet_path)
-        elif csv_path.exists():
-            frame = pd.read_csv(csv_path)
+        path, source_date = resolve_feature_file(features_dir, date, allow_fallback)
+        feature_source_by_date[date] = source_date
+        if path.suffix.lower() == ".parquet":
+            frame = pd.read_parquet(path)
         else:
-            raise FileNotFoundError(f"Missing live feature file for date={date}: {features_dir}")
+            frame = pd.read_csv(path)
         frame = frame.copy()
         if "code" in frame.columns and "ts_code" not in frame.columns:
             frame = frame.rename(columns={"code": "ts_code"})
         if "trade_date" not in frame.columns or "ts_code" not in frame.columns:
             raise ValueError(f"Feature file for date={date} must contain trade_date and ts_code")
         frame["trade_date"] = frame["trade_date"].map(normalize_date)
+        frame = frame[frame["trade_date"].eq(source_date)].copy()
+        frame["trade_date"] = date
         frame["ts_code"] = frame["ts_code"].astype(str)
         if "amount" in frame.columns:
             frame["next_amount"] = pd.to_numeric(frame["amount"], errors="coerce").fillna(0.0)
@@ -158,7 +195,7 @@ def load_features(features_dir: Path, dates: list[str]) -> pd.DataFrame:
                 ]
             ]
         )
-    return pd.concat(frames, ignore_index=True)
+    return pd.concat(frames, ignore_index=True), feature_source_by_date
 
 
 def load_daily_bars(daily_root: Path, dates: list[str]) -> pd.DataFrame:
@@ -400,7 +437,11 @@ def main() -> None:
     dates = args.dates
     strategies = ["daily", "5d"] if args.strategy == "both" else [args.strategy]
     predictions = load_predictions(Path(args.predictions_dir), dates)
-    features = load_features(Path(args.features_dir), dates)
+    features, feature_source_by_date = load_features(
+        Path(args.features_dir),
+        dates,
+        allow_fallback=bool(args.allow_feature_fallback),
+    )
     data = predictions.merge(features, on=["trade_date", "ts_code"], how="left")
     data["next_amount"] = pd.to_numeric(data["next_amount"], errors="coerce").fillna(0.0)
     bars = load_daily_bars(Path(args.daily_root), dates)
@@ -433,6 +474,7 @@ def main() -> None:
         "strategy": args.strategy,
         "k": args.k,
         "initial_nav": float(args.initial_nav),
+        "feature_source_by_date": feature_source_by_date,
         "output_dir": str(out_dir),
         "period_rows": int(len(periods)),
         "position_rows": int(len(positions)),
