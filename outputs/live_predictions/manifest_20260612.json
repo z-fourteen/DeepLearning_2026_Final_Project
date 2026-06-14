@@ -1,0 +1,10 @@
+{
+  "trade_date": "20260612",
+  "source": "D:\\oxx\\大学相关事情\\学习课程相关\\深度学习基础\\Final-YXR\\data\\live\\features\\live_sequence_20260611_l60.npz",
+  "output_parquet": "D:\\oxx\\大学相关事情\\学习课程相关\\深度学习基础\\Final-YXR\\outputs\\live_predictions\\predictions_20260612.parquet",
+  "output_csv": "D:\\oxx\\大学相关事情\\学习课程相关\\深度学习基础\\Final-YXR\\outputs\\live_predictions\\predictions_20260612.csv",
+  "rows": 93,
+  "score_mean": 0.003283839672803879,
+  "score_std": 0.00019259382679592818,
+  "shortfall_penalty_today": 5000.0
+}

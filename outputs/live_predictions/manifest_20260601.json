@@ -1,10 +1,10 @@
 {
   "trade_date": "20260601",
-  "source": "D:\\YangXiran\\USTC\\0_Math\\DeepLearning\\Final\\DeepLearning_2026_Final_Project\\data\\live\\features\\features_20260601.parquet",
-  "output_parquet": "D:\\YangXiran\\USTC\\0_Math\\DeepLearning\\Final\\DeepLearning_2026_Final_Project\\outputs\\live_predictions\\predictions_20260601.parquet",
-  "output_csv": "D:\\YangXiran\\USTC\\0_Math\\DeepLearning\\Final\\DeepLearning_2026_Final_Project\\outputs\\live_predictions\\predictions_20260601.csv",
-  "rows": 100,
-  "score_mean": -0.0036438717506825924,
-  "score_std": 0.0004607890441548079,
+  "source": "D:\\oxx\\大学相关事情\\学习课程相关\\深度学习基础\\Final-YXR\\data\\live\\features\\live_sequence_20260601.npz",
+  "output_parquet": "D:\\oxx\\大学相关事情\\学习课程相关\\深度学习基础\\Final-YXR\\outputs\\live_predictions\\predictions_20260601.parquet",
+  "output_csv": "D:\\oxx\\大学相关事情\\学习课程相关\\深度学习基础\\Final-YXR\\outputs\\live_predictions\\predictions_20260601.csv",
+  "rows": 93,
+  "score_mean": 0.00334322196431458,
+  "score_std": 0.00020273948030080646,
   "shortfall_penalty_today": 500.0
 }

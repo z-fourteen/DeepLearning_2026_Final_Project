@@ -1,0 +1,66 @@
+{
+  "inputs": {
+    "predictions_dir": "..\\Final-YXR\\outputs\\live_predictions",
+    "daily_root": "..\\Final-OXX2\\A股数据\\daily",
+    "market_root": "..\\Final-OXX2\\A股数据\\market",
+    "benchmark_code": "399006.SZ",
+    "dates": [
+      "20260601",
+      "20260602",
+      "20260603",
+      "20260604",
+      "20260605",
+      "20260608",
+      "20260609",
+      "20260610",
+      "20260611",
+      "20260612"
+    ],
+    "k": [
+      20
+    ],
+    "strategy": "both",
+    "rebalance_stride": 5,
+    "cost_bps": 10.0,
+    "slippage_bps": 5.0,
+    "min_daily_count": 40
+  },
+  "summary": {
+    "5d|k=20": {
+      "strategy": "5d",
+      "k": 20,
+      "period_count": 10,
+      "start_date": "20260601",
+      "end_date": "20260612",
+      "cumulative_return": -0.03781853500730725,
+      "benchmark_cumulative_return": 0.0,
+      "excess_cumulative_return": -0.03781853500730725,
+      "annualized_return": -0.6214911289644773,
+      "annualized_vol": 0.3005519315668691,
+      "sharpe_like": -2.0678327559715024,
+      "max_drawdown": -0.054638786889280255,
+      "win_rate": 0.4,
+      "avg_turnover": 0.14441196139176538,
+      "avg_transaction_cost": 0.00021661794208764808,
+      "avg_position_count": 20.0
+    },
+    "daily|k=20": {
+      "strategy": "daily",
+      "k": 20,
+      "period_count": 10,
+      "start_date": "20260601",
+      "end_date": "20260612",
+      "cumulative_return": -0.04107255460594894,
+      "benchmark_cumulative_return": 0.0,
+      "excess_cumulative_return": -0.04107255460594894,
+      "annualized_return": -0.6524631442197691,
+      "annualized_vol": 0.2844231152187972,
+      "sharpe_like": -2.2939877573517578,
+      "max_drawdown": -0.05386829922083425,
+      "win_rate": 0.4,
+      "avg_turnover": 0.1910359035346761,
+      "avg_transaction_cost": 0.00028655385530201416,
+      "avg_position_count": 20.0
+    }
+  }
+}
