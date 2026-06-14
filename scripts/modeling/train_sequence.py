@@ -20,7 +20,13 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from src.data import DateBatchSampler, SequenceNPZDataset  # noqa: E402
-from src.models import FeatureStyleInteractionGRUStockModel, GRUStockModel, RegimeGatedGRUStockModel  # noqa: E402
+from src.models import (  # noqa: E402
+    EnhancedTransformerModel,
+    FeatureStyleInteractionGRUStockModel,
+    GRUStockModel,
+    RegimeGatedGRUStockModel,
+    TransformerStockModel,
+)
 from src.training import MSEICLoss, PearsonICLoss, TopKBandMarginICLoss, TopKMarginICLoss, Trainer, resolve_device  # noqa: E402
 
 
@@ -111,6 +117,17 @@ def build_scheduler(
         return None
     if scheduler_name == "cosine":
         return torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=max_epochs)
+    if scheduler_name == "warmup_cosine":
+        warmup_ratio = float(config.get("warmup_ratio", 0.1))
+        warmup_epochs = max(1, round(max_epochs * warmup_ratio))
+
+        def lr_lambda(epoch: int) -> float:
+            if epoch < warmup_epochs:
+                return float(epoch + 1) / float(warmup_epochs)
+            progress = (epoch - warmup_epochs) / max(1, max_epochs - warmup_epochs)
+            return 0.5 * (1.0 + math.cos(math.pi * progress))
+
+        return torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=lr_lambda)
     raise ValueError(f"Unsupported scheduler: {scheduler_name}")
 
 
@@ -251,6 +268,10 @@ def main() -> None:
         model = FeatureStyleInteractionGRUStockModel(num_features=num_features, config=model_config)
     elif model_name == "regime_gated_gru":
         model = RegimeGatedGRUStockModel(num_features=num_features, config=model_config)
+    elif model_name == "transformer_encoder":
+        model = TransformerStockModel(num_features=num_features, config=model_config)
+    elif model_name == "transformer_enhanced":
+        model = EnhancedTransformerModel(num_features=num_features, config=model_config)
     else:
         raise ValueError(f"Unsupported sequence model for this script version: {model_name}")
     optimizer = build_optimizer(model, training_config)
