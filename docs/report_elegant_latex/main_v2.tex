@@ -1,0 +1,693 @@
+\documentclass[12pt,a4paper,cn,bibtex]{elegantpaper}
+
+\usepackage{float}
+\usepackage{array}
+\usepackage{booktabs}
+\usepackage{tabularx}
+\usepackage{longtable}
+\usepackage{xcolor}
+\usepackage{enumitem}
+\usepackage{graphicx}
+
+\providecommand{\microtypesetup}[1]{}
+
+\addbibresource[location=local]{reference.bib}
+\setlength{\emergencystretch}{4em}
+
+\newcommand{\placeholder}[2]{
+    \par\medskip
+    \noindent\textbf{待补充：#1}\par
+    \noindent\textcolor{gray}{#2}
+    \par\medskip
+}
+
+\newcommand{\codepath}[1]{\nolinkurl{#1}}
+\newcommand{\modelname}[1]{\nolinkurl{#1}}
+\newcolumntype{Y}{>{\raggedright\arraybackslash}X}
+
+\title{基于深度学习的股票趋势预测与模拟交易}
+\author{赵国华 PB24061302 \quad 杨曦然 PB23010400 \quad 欧想想 PB24000206}
+\institute{中国科学技术大学\\深度学习基础大作业报告}
+\date{\today}
+
+\begin{document}
+
+\maketitle
+
+\begin{abstract}
+金融时间序列具有高噪声、非平稳性和复杂依赖结构等特点，是深度学习方法在真实场景中落地时具有代表性的挑战。本项目围绕 A 股历史日频数据，构建了从数据预处理、特征工程、序列样本构造、深度学习建模、历史回测到同花顺模拟交易的完整流程。报告第二版采用“模型家族内部选择 + 冻结模型交易口径复盘”的叙述主线：首先说明数据处理与标签构造方式；随后介绍 GRU 与 Transformer 两类序列模型的基本原理；接着分别在 GRU 家族和 Transformer 家族内部进行消融对比，目的不是简单比较 GRU 与 Transformer 谁更强，而是解释每个家族为什么最终冻结当前版本；最后围绕比赛实操采用的 GRU 主力模型，对五日调仓与每日调仓的一致性问题、历史理论测试结果和真实模拟交易偏差进行复盘分析。实验结果表明，模型层 IC/RankIC 与交易层收益并不总是单调一致，深度学习预测能力只有通过稳定的交易执行规则、严格的数据泄露防御和可复盘的实盘操作记录，才能转化为更有解释力的策略表现。
+\keywords{深度学习；股票趋势预测；GRU；Transformer；消融实验；模拟交易}
+\end{abstract}
+
+\tableofcontents
+\newpage
+
+\section{股票池选择}
+
+\subsection{数据来源}
+
+本项目使用课程提供的 A 股上市公司基础量价日频数据，数据自 2016 年开始，主要包含股票代码、交易日期、开盘价、最高价、最低价、收盘价、成交量和成交额等字段。
+
+\subsection{股票选择}
+本实验选择创业板指数成分股作为研究对象。创业板企业以科技、新能源、医药和高端制造等成长型行业为主，具有以下特点：
+\begin{enumerate}
+    \item 高成长性：创业板公司通常处于快速发展阶段，业绩增长潜力较大，投资者对其未来预期高。
+    \item 高波动性：创业板股票价格波动较大，受市场情绪和资金流动影响显著，涨跌幅限制较大（20\%），使其具备更高波动和更明显的趋势延续、反转及流动性冲击特征。
+    \item 高风险性：该股票池也带来超高噪声、强非平稳性、小市值流动性溢价和尾部风险等建模挑战，适合用于测试模型的鲁棒性和泛化能力。
+\end{enumerate}
+
+\section{数据处理与样本构造}
+\subsection{数据清洗}
+
+为保证后续特征构造、模型训练和回测结果可靠，我们对原始日频数据进行统一清洗。主要操作如下：
+
+\begin{enumerate}
+    \item \textbf{字段与类型检查}：统一股票代码和交易日期格式，将开盘价、最高价、最低价、收盘价、成交量、成交额等字段转为数值类型；剔除代码、日期或核心价格字段缺失的记录。
+    \item \textbf{交易日对齐}：按交易日历整理面板数据，保证同一交易日下不同股票样本可横截面对齐；非交易日不参与样本构造。
+    \item \textbf{股票状态过滤}：结合日度证券状态表，剔除 ST、*ST、停牌、价格无效、成交量无效等不可正常交易样本，避免异常交易状态干扰模型学习。
+    \item \textbf{涨跌停处理}：识别涨停、跌停以及接近涨跌停的样本；对锁死涨跌停导致无法买入或卖出的记录，在训练样本或后续执行评估中单独过滤或标记。
+    \item \textbf{缺失与异常值处理}：对计算过程中产生的 \texttt{NaN}、\texttt{Inf} 和除零异常进行统一替换；若样本窗口内仍存在缺失值，则不进入模型训练。对估值类极端值采用分位数缩尾，降低异常点影响。
+\end{enumerate}
+
+经过上述处理后，我们得到结构统一、交易状态明确、异常记录可控的日频量价数据面板，为后续特征工程、标签构造和滑动窗口样本生成提供可靠基础。停牌、涨跌停等交易状态信息主要用于识别异常交易日和不可正常交易样本，不在数据清洗阶段被解释为收益预测信号。
+
+\subsection{特征工程}
+
+本项目的特征工程经历了从 full 特征池到 clean 特征合同的演进。我们的核心思路不是简单增加特征数量，而是在实验过程中逐步区分“可用于预测的 alpha 信息”和“只应作为控制、过滤或诊断的信息”，从而降低隐性数据泄露和回测偏乐观风险。
+
+\begin{table}[H]
+    \centering
+    \caption{三类特征工程方案对比}
+    \small
+    \setlength{\tabcolsep}{3pt}
+    \begin{tabularx}{\textwidth}{@{}>{\raggedright\arraybackslash}p{0.18\textwidth}>{\raggedright\arraybackslash}p{0.15\textwidth}YY@{}}
+        \toprule
+        方案 & 特征数量 & 特征构成 & 实验定位 \\
+        \midrule
+        Full 特征池 & 62 & 
+        alpha 16；risk control 13；tradability control 23；exclude 10 &
+        早期探索方案，用于快速验证模型是否具有横截面排序能力 \\
+        \midrule
+        Alpha-only clean & 13 &
+        从 full 特征池中筛选出的 point-in-time alpha 特征 &
+        防泄露更严格、解释性更强，但市场状态信息不足 \\
+        \midrule
+        Alpha + residual-style & 18 &
+        13 个 alpha 特征 + 5 个 residual-style 特征 &
+        最终主线，在防泄露约束下补充有限风格状态信息 \\
+        \bottomrule
+    \end{tabularx}
+\end{table}
+
+\begin{enumerate}
+    \item \textbf{Full 特征池}：旧版 GRU baseline 使用 \texttt{advanced\_sequence\_fixed} 特征集，共 62 个输入特征。该方案覆盖收益、技术指标、资金流、估值、市值、流动性、波动率、涨跌停和日历变量等信息，优点是信息覆盖充分，便于跑通端到端建模和回测流程。但从后续审计看，该特征池混合了 alpha 候选、风险暴露、可交易性变量和低解释性变量，模型可能学习到风格暴露或交易状态，而不完全是稳定的收益预测信号，因此不适合作为最终 clean 主线。
+
+    \item \textbf{Alpha-only clean}：为解决 full 特征池过宽的问题，我们构造了只包含 13 个 alpha 特征的 clean 数据集。这些特征均采用 \texttt{lag1\_} 滞后形式，主要包括资金强度、价格位置、超额收益、行业中性收益、短中期收益、布林带位置、均线比例和 MACD 等。该方案明确移除了原始风格变量、风控变量和交易状态字段，提高了防泄露强度和解释性，但实验中也暴露出一个问题：创业板市场的收益与规模、流动性、波动率等状态关系较强，完全剥离风格信息会使模型信号支撑变薄。
+
+    \item \textbf{Alpha + residual-style}：最终主线采用 \texttt{alpha\_plus\_residual\_style}，即 13 个 alpha 特征加 5 个 residual-style 特征，共 18 个输入特征。residual-style 特征来自换手、成交额等风格相关变量，但在进入模型前先对行业、规模、流动性、波动率和动量暴露进行残差化处理。这样做的目的不是重新放开 full 特征池，而是在不直接输入原始控制变量的前提下，让 GRU 感知有限的市场状态变化。
+\end{enumerate}
+
+因此，最终选择 18 维特征集合，是在“信息量、可解释性、防泄露约束”之间折中的结果：full 特征池用于探索，alpha-only 用于验证纯 alpha 信号，alpha + residual-style 则作为最终模型输入合同。风险控制、可交易性和执行约束被保留在模型输入之外，用于样本过滤、诊断分析和后续组合优化。
+
+\subsection{特征尺度处理与防泄露约束}
+
+本项目没有在全量时间样本上对最终特征统一拟合标准化参数，而是优先通过收益率化、比例化、滚动统计、截面排名和残差化等方式处理特征尺度问题。这样做的核心考虑是：金融时间序列分布随时间变化明显，若直接使用全样本均值、方差或分位数进行标准化，会将验证集和测试集的分布信息提前引入训练过程，造成数据泄露。
+
+具体处理如下：
+
+\begin{enumerate}
+    \item \textbf{收益率化与比例化}：将价格水平转化为日收益率、区间收益率、振幅、均线比例、收盘价位置等相对指标，降低不同股票价格量级差异的影响。
+    \item \textbf{滚动统计}：均线、波动率、成交额均值、换手率均值等指标均按股票自身历史窗口计算，只依赖当前日及此前可见数据。
+    \item \textbf{截面相对化}：成交额分位、行业排名、行业中性收益等特征在同一交易日横截面内计算，用于削弱市场共同冲击和行业风格差异。
+    \item \textbf{残差化处理}：对部分风格信息按行业、规模、流动性、波动率等暴露进行截面回归，保留残差项作为 residual-style 特征，避免模型直接学习粗糙的风格暴露。
+    \item \textbf{跨期标准化约束}：若后续引入全局标准化器，其均值、方差或分位数参数必须仅由训练集估计，再应用到验证集和测试集，严禁在全量样本上统一拟合。
+\end{enumerate}
+
+因此，本项目的尺度处理重点不是机械套用统一归一化公式，而是在保持 point-in-time 约束的前提下，将原始量价数据转化为更稳定、更可比较的相对特征。
+
+\subsection{预测任务与标签构造}
+
+本项目将问题定义为横截面股票收益排序任务：在交易日 $t$ 收盘后，根据历史量价和技术特征预测个股未来 5 个交易日相对创业板基准的收益表现。标签定义为：
+
+\[
+    y_{i,t} = R_{i,t:t+5} - R^{bench}_{t:t+5},
+\]
+
+其中 $R_{i,t:t+5}$ 表示股票 $i$ 未来 5 个交易日收益，$R^{bench}_{t:t+5}$ 表示同期创业板基准收益。采用相对收益而非绝对收益，是为了降低市场整体涨跌对训练目标的影响，使模型更关注个股间的相对强弱。
+
+标签只作为监督学习目标 \texttt{y} 使用，不参与任何特征计算。虽然标签本身包含未来收益，但这是监督学习中允许的目标变量；项目中特别将标签表、执行标签和模型特征表分离，防止未来收益或 T+1 成交结果被误放入特征矩阵。
+
+\subsection{滑动窗口样本构造}
+
+GRU 需要序列形式的输入，因此我们将清洗和特征工程后的日频面板转换为滑动窗口样本。最终主线采用 60 个交易日作为回看窗口，每个样本的形状为：
+
+\[
+    X_{i,t} \in \mathbb{R}^{60 \times 18}.
+\]
+
+\begin{enumerate}
+    \item \textbf{按股票独立排序}：先对每只股票按交易日期排序，保证窗口内部时间顺序正确。
+    \item \textbf{只向过去取样}：样本 $X_{i,t}$ 由 $t$ 日及之前的滞后特征组成，不包含 $t+1$ 之后的任何信息。
+    \item \textbf{窗口完整性检查}：若 60 日窗口内任一特征存在缺失或无穷值，或对应标签缺失，则该样本不进入训练张量。
+    \item \textbf{保留索引信息}：每个样本同时保存 \texttt{trade\_date}、\texttt{ts\_code} 和 \texttt{split}，便于后续按日期计算 IC、回测和诊断。
+\end{enumerate}
+
+\subsection{训练集与验证集划分}
+
+金融时间序列不能随机划分训练集和验证集，否则相邻日期的高度相关样本会造成隐性泄露。本项目采用按时间推进的 purged walk-forward 切分方式，并将最终测试区间锁定用于独立评估。
+
+\begin{table}[H]
+    \centering
+    \caption{最终主线的数据划分}
+    \begin{tabular}{lll}
+        \toprule
+        数据集 & 时间范围 & 用途 \\
+        \midrule
+        训练集 & 2016-01-04 至 2022-12-31 & 模型参数学习 \\
+        验证集 & 2023-02-01 至 2024-12-31 & 模型选择和早停判断 \\
+        测试集 & 2025-02-01 至 2026-05-25 & 最终效果评估 \\
+        \bottomrule
+    \end{tabular}
+\end{table}
+
+由于标签使用未来 5 个交易日收益，训练集与验证集、验证集与测试集之间设置 purge 和 embargo 间隔；对应配置为 horizon=5、purge=5、embargo=20。这样可以减少窗口重叠、标签重叠和调参过程中的未来信息渗透。
+
+\subsection{数据泄露防范}
+
+防止数据泄露是本阶段设计的核心亮点。我们将其落实为明确的工程规则，而不是只在实验后检查结果：
+
+\begin{enumerate}
+    \item \textbf{特征滞后}：模型特征必须使用 \texttt{lag1\_} 形式，保证信号生成时特征已经可观测。
+    \item \textbf{标签隔离}：未来收益、相对收益标签和 T+1 执行标签均不进入特征矩阵。
+    \item \textbf{控制变量分离}：停牌、涨跌停、可交易性等变量属于交易状态控制信息，而非普通收益预测因子。若将其直接输入模型，模型可能学习到样本过滤或成交约束本身，造成隐性数据泄露。因此，这类变量只用于样本有效性判断和回测执行约束，不作为原始 alpha 特征进入模型。
+    \item \textbf{时间切分}：训练、验证和测试严格按时间顺序划分，禁止随机打乱；相邻区间之间设置 purge 和 embargo。
+    \item \textbf{标准化约束}：任何跨样本统计参数只能从训练期估计，不能使用全量数据预先拟合。
+    \item \textbf{审计意识}：在数据构造阶段保留 manifest、sidecar 和 filter log，便于追踪每个样本的来源、切分归属和过滤原因。
+\end{enumerate}
+
+因此，本阶段形成的不是单一数据文件，而是一套可追踪的数据生成协议，每一步都围绕“只使用当时能够知道的信息”展开。
+
+\section{模型原理与实现}
+
+\subsection{GRU 模型原理}
+GRU（Gated Recurrent Unit）是一类门控循环神经网络，适合处理按时间顺序排列的日频量价序列。创业板股票具有高波动、高噪声和阶段性风格切换等特点，单日特征往往不稳定；GRU 通过门控机制在历史信息和最新变化之间动态取舍，能够在较低参数量下提取短期动量、波动聚集和近期反转等序列信号，因此适合作为本项目的主力时序模型。
+
+在时间步 $t$，给定当前输入 $x_t$ 和上一时刻隐藏状态 $h_{t-1}$，GRU 的核心递推过程为：
+\begin{align}
+    z_t &= \sigma(W_z x_t + U_z h_{t-1} + b_z), \\
+    r_t &= \sigma(W_r x_t + U_r h_{t-1} + b_r), \\
+    \tilde{h}_t &= \tanh(W_h x_t + U_h(r_t \odot h_{t-1}) + b_h), \\
+    h_t &= (1-z_t) \odot h_{t-1} + z_t \odot \tilde{h}_t.
+\end{align}
+其中 $z_t$ 为更新门，决定当前候选状态写入多少；$r_t$ 为重置门，决定生成候选状态时参考多少历史记忆。序列最后一个时间步的隐藏状态 $h_T$ 可视为过去窗口的信息汇总，再经预测头输出股票的横截面排序分数。
+
+\subsection{本项目 GRU 实现}
+
+本项目最终采用的并不是最朴素的 GRU baseline，而是 \modelname{feature\_style\_interaction\_gru}。输入张量维度为：
+\[
+    X \in \mathbb{R}^{B \times 60 \times 18},
+\]
+其中 $B$ 为 batch size，60 为回看交易日数，18 个特征由 13 个 alpha 特征和 5 个 residual-style 特征组成。模型首先将前 13 个 alpha 特征投影到 $d_{model}=64$ 维空间，再送入 2 层单向 GRU（hidden size 为 128，dropout 为 0.2），得到 alpha 序列上下文：
+\[
+    c_{\alpha} = \operatorname{LayerNorm}(h_T).
+\]
+
+为了避免将原始风格或交易控制变量直接喂给 GRU，5 个 residual-style 特征不进入 GRU 主干，而是只取窗口最后一天的风格状态，经 style encoder 生成 FiLM 调制参数：
+\[
+    \gamma, \beta = \operatorname{FiLM}(s_T),
+    \qquad
+    c = \operatorname{LayerNorm}\left(c_{\alpha} \odot (1+\gamma) + \beta\right).
+\]
+最终预测头以 $c$ 为输入，输出一个标量预测分：
+\[
+    \hat{y} = \operatorname{MLP}(c).
+\]
+该分数用于未来 5 日相对收益的横截面排序，而不是精确收益率校准。
+
+这种结构与前文的 clean feature contract 相对应：GRU 主干专注学习 point-in-time alpha 序列，residual-style 特征仅以有限调制方式补充市场状态信息。这样既保留了 GRU 对时间依赖的建模能力，也降低了模型直接依赖风格暴露、交易状态或执行约束的风险。
+
+\subsection{Transformer 模型原理}
+Transformer 使用自注意力机制对序列中任意两个时间步之间的关系进行建模。与 GRU 的递推结构不同，Transformer 可以让窗口内每个交易日直接关注其他交易日，因此更适合捕捉跨周期的非局部依赖。例如，某些成交量异常或价格突破可能并不只影响相邻几天，而是与更早的趋势状态共同决定未来收益。
+
+自注意力机制首先将输入序列映射为 Query、Key 和 Value：
+\begin{equation}
+    Q = XW_Q, \quad K = XW_K, \quad V = XW_V.
+\end{equation}
+单头注意力的计算为：
+\begin{equation}
+    \operatorname{Attention}(Q,K,V) = \operatorname{softmax}\left(\frac{QK^T}{\sqrt{d_k}}\right)V.
+\end{equation}
+多头注意力进一步将特征空间分成多个子空间并行计算，使模型可以同时关注不同类型的时间依赖。编码器输出仍保留时间维度，因此需要通过 CLS token、mean pooling 或 last token 等方式压缩为单个向量，再接预测头输出分数。
+
+\subsection{GRU 与 Transformer 在本任务中的角色划分}
+
+本任务的核心困难在于：股票日频数据噪声较强、有效信号较弱，且模拟交易阶段需要模型能够稳定地产生每日横截面预测分数。因此，模型选择不仅要考虑表达能力，还要考虑训练稳定性、过拟合风险和实盘执行的可靠性。在这一背景下，GRU 与 Transformer 在本项目中承担了不同角色。
+
+GRU 是本项目的主线模型。GRU 通过门控递推机制逐日更新隐藏状态，能够按照时间顺序压缩历史窗口中的信息，适合提取短期趋势、反转、波动变化等时序特征。相比更复杂的注意力模型，GRU 参数量较少，训练过程相对稳定，对小样本、高噪声任务更友好。因此，在需要稳定输出每日股票评分并接入模拟交易流程的场景下，GRU 更适合作为主力模型。
+
+Transformer 则作为结构异质的参照模型。与 GRU 依次读取历史序列不同，Transformer 通过自注意力机制让窗口内不同交易日直接交互，理论上能够捕捉更长距离、更复杂的时间依赖。引入 Transformer 的目的并不是简单地与 GRU 比较最终收益高低，而是提供一个更高容量、更强表达能力的对照，观察复杂模型在同一股票池、同一特征体系、同一标签定义和同一回测框架下，是否能够带来更稳定的预测和交易收益。
+
+这种角色划分有助于区分三个层面的问题。第一，若 Transformer 在 IC、RankIC 和历史回测收益上均明显优于 GRU，说明本任务可能需要更复杂的全局时序建模能力。第二，若 Transformer 的模型层指标较好，但回测收益不稳定，则说明更强的表达能力并不一定能转化为可执行的交易收益。第三，若 GRU 在模型指标未必最优的情况下表现出更稳定的回测和实盘执行效果，则说明在本任务中，模型稳健性和交易可执行性比单纯提高模型复杂度更重要。
+
+综上，本报告将 GRU 作为面向实盘执行的主线模型，将 Transformer 作为结构参照。后续分析中，GRU 主要用于解释最终模拟交易流程、每日调仓和实盘偏差；Transformer 主要用于辅助讨论模型复杂度、预测指标与交易收益之间的关系。
+
+\section{模型内部消融与最终版本选择}
+
+\subsection{GRU 模型消融与版本选择}
+本实验中，GRU 模型的演进沿着“数据合同更可信、预测信号更稳定、交易回测更可执行”的顺序逐步收敛。具体来看，GRU 的版本选择不是一次完成的，而是先比较基础 GRU 在不同特征合同下的表现，再通过 residual-style 特征消融识别基础结构的局限，随后升级为 \modelname{feature\_style\_interaction\_gru}，最后在 L20 与 L60 两种窗口长度之间确定最终冻结版本。
+
+\subsubsection{基础 GRU 与特征合同演进}
+
+早期基础 GRU 使用 62 维 full 特征池，目标是快速验证 GRU 是否具备横截面排序能力。该版本在测试期表现较强，但 full 特征池同时包含 alpha 候选、风格暴露、交易状态和可交易性变量，容易把交易约束或市场状态误学成收益预测信号。为提高数据合同的可解释性和防泄露强度，我们随后构造了 clean 特征集：先保留 13 个 point-in-time alpha 特征，再尝试加入 5 个 residual-style 特征。
+
+\begin{table}[H]
+    \centering
+    \small
+    \setlength{\tabcolsep}{4pt}
+    \begin{tabularx}{\textwidth}{Xccccc}
+        \toprule
+        \textbf{基础 GRU 版本} & \textbf{特征数} & \textbf{Val RankIC} & \textbf{Test RankIC} & \textbf{Top20 年化} & \textbf{Top20 超额} \\
+        \midrule
+        \modelname{old\_full62} & 62 & 0.0232 & 0.0544 & 64.15\% & 11.86\% \\
+        \modelname{clean\_alpha13} & 13 & 0.0353 & 0.0251 & 54.16\% & 2.62\% \\
+        \modelname{clean\_alpha18\_resid} & 18 & 0.0386 & 0.0050 & 41.27\% & -6.09\% \\
+        \bottomrule
+    \end{tabularx}
+    \caption{基础 GRU 的特征合同演进与历史回测表现}
+    \label{tab:gru-feature-evolution}
+\end{table}
+
+表 \ref{tab:gru-feature-evolution} 可以看出，\modelname{old\_full62} 的测试期收益和 Test RankIC 最好，但其优势建立在较宽的特征合同上，不适合作为最终 clean 主线。\modelname{clean\_alpha13} 的收益低于 full 特征池，但特征来源更清晰，防泄露约束更强。进一步加入 residual-style 后，\modelname{clean\_alpha18\_resid} 的 Val RankIC 上升到 0.0386，但 Test RankIC 降至 0.0050，Top20 超额也变为 -6.09\%。这说明基础 GRU 直接拼接 residual-style 特征后，验证集相关性提升并没有稳定转化为测试期交易收益。
+
+\subsubsection{Residual-style 特征删除消融}
+
+为了判断 residual-style 信息本身是否有效，我们进一步对 18 维 clean 特征集做单特征删除消融。该实验不是为了从删除版本中重新挑选最终模型，而是用于诊断基础 GRU 在处理风格残差信息时的局限性：如果删除某个 residual-style 特征后测试回测反而改善，说明基础 GRU 可能把该特征中的阶段性风格暴露当成了稳定 alpha。
+
+\begin{table}[H]
+    \centering
+    \scriptsize
+    \setlength{\tabcolsep}{2pt}
+    \begin{tabular}{p{0.20\textwidth}p{0.24\textwidth}cccc}
+        \toprule
+        \textbf{消融版本} & \textbf{删除特征} & \textbf{Val RankIC} & \textbf{Test RankIC} & \textbf{Top20 年化} & \textbf{Top20 超额} \\
+        \midrule
+        \modelname{base} & 无 & 0.0386 & 0.0050 & 41.27\% & -6.09\% \\
+        \modelname{drop\_turnover20} & 20 日换手波动残差 & 0.0436 & 0.0104 & 52.36\% & 1.15\% \\
+        \modelname{drop\_turnover60} & 60 日换手波动残差 & 0.0392 & 0.0117 & 47.78\% & -2.12\% \\
+        \modelname{drop\_amount\_rank} & 成交额截面排名残差 & 0.0395 & 0.0109 & 44.70\% & -3.93\% \\
+        \modelname{drop\_amount\_log} & 对数成交额残差 & 0.0488 & 0.0122 & 40.68\% & -6.76\% \\
+        \bottomrule
+    \end{tabular}
+    \caption{Residual-style 特征的单特征删除消融}
+    \label{tab:gru-resid-ablation}
+\end{table}
+
+表 \ref{tab:gru-resid-ablation} 显示，删除部分换手或成交额残差后，测试 RankIC 普遍高于原始 \modelname{base}。其中删除 20 日换手波动残差后，Top20 年化由 41.27\% 提升至 52.36\%，相对 universe 超额由 -6.09\% 转为 1.15\%。这说明 residual-style 特征并非不能使用，但基础 GRU 缺少约束时容易把风格残差当成直接收益信号。由此得到的结论是：需要保留有限的市场状态信息，但不能让它与 alpha 序列在同一通道中自由混合。
+
+\subsubsection{Feature-style interaction GRU 的结构升级}
+
+基于上述诊断，最终 GRU 结构升级为 \modelname{feature\_style\_interaction\_gru}。该模型将 13 个 alpha 特征送入 GRU 主干，用于学习日频序列中的趋势、反转和波动变化；5 个 residual-style 特征不再作为完整序列输入主干，而是只取窗口最后一天的状态，通过 style encoder 生成调制参数，对 alpha 表征做有限修正。这样做的目的不是单纯增加模型复杂度，而是在结构上约束风格信息的使用方式。
+
+\begin{table}[H]
+    \centering
+    \scriptsize
+    \setlength{\tabcolsep}{2pt}
+    \begin{tabular}{p{0.23\textwidth}p{0.21\textwidth}cccc}
+        \toprule
+        \textbf{模型} & \textbf{结构设定} & \textbf{Val RankIC} & \textbf{Test RankIC} & \textbf{Top20 年化} & \textbf{Top20 超额} \\
+        \midrule
+        \modelname{basic-GRU} & 18 维特征直接拼接 & 0.0386 & 0.0050 & 41.27\% & -6.09\% \\
+        \modelname{FSI-GRU-L20} & alpha 主干 + style 调制 & 0.0400 & 0.0092 & 54.79\% & 5.82\% \\
+        \modelname{FSI-GRU-L60} & alpha 主干 + style 调制 & 0.0325 & 0.0287 & 54.91\% & 5.25\% \\
+        \bottomrule
+    \end{tabular}
+    \caption{基础 GRU 与 feature-style interaction GRU 对比}
+    \label{tab:gru-fsi-upgrade}
+\end{table}
+
+表 \ref{tab:gru-fsi-upgrade} 表明，结构升级后，两个 FSI-GRU 版本的 Top20 年化都提升到约 55\%，且相对 universe 超额转正。尤其是 L60 版本，虽然 Val RankIC 低于 L20，但 Test RankIC 达到 0.0287，明显高于基础 GRU 的 0.0050。这说明结构约束比简单增加 residual-style 输入更有效，也解释了为什么最终模型没有退回 alpha-only 或基础 alpha18 GRU。
+
+\subsubsection{回看窗口选择：L20 与 L60}
+
+在确定采用 \modelname{feature\_style\_interaction\_gru} 后，最后需要选择回看窗口长度。20 日窗口更贴近短期动量和反转，验证 RankIC 较高；60 日窗口覆盖更长的市场状态变化，测试期排序稳定性和交易路径更好。因此，窗口选择不只看验证集相关性，还需要结合统一 T+1 五日调仓回测中的收益、IR、回撤和换手。
+
+\begin{table}[H]
+    \centering
+    \small
+    \setlength{\tabcolsep}{4pt}
+    \begin{tabularx}{\textwidth}{Xccccc}
+        \toprule
+        \textbf{版本} & \textbf{最优设置} & \textbf{年化收益} & \textbf{IR} & \textbf{最大回撤} & \textbf{平均成交换手} \\
+        \midrule
+        \modelname{FSI-GRU-L20} & \modelname{top20\_keep1x} & 54.79\% & 0.211 & -21.70\% & 16.29\% \\
+        \modelname{FSI-GRU-L60} & \modelname{top20\_keep1.5x} & 54.91\% & 0.263 & -17.04\% & 12.82\% \\
+        \bottomrule
+    \end{tabularx}
+    \caption{Feature-style interaction GRU 的窗口长度对比}
+    \label{tab:gru-fsi-window}
+\end{table}
+
+表 \ref{tab:gru-fsi-window} 显示，L20 与 L60 的测试年化收益几乎相同，但 L60 的 IR 更高、最大回撤更低、平均成交换手也更低。这说明更长窗口有助于过滤短期噪声，使预测分数在交易层面更容易被稳定利用。因此，最终冻结版本选择 \modelname{feature\_style\_interaction\_gru\_l60\_clean\_alpha\_resid\_style\_topk10\_wide30\_clean}，即后文所称的 \modelname{gru-final}。
+
+\subsection{Transformer 模型消融与版本选择}
+
+Transformer 的消融实验采用两层评价口径：
+\begin{enumerate}[label=\arabic*)]
+    \item \textbf{模型层指标}：在验证集上按 best epoch 记录 IC、RankIC、ICIR 等指标，用于衡量模型预测分与未来收益之间的相关性；
+    \item \textbf{交易层指标}：将模型预测分输入统一回测策略，记录累计收益、Sharpe-like、最大回撤、胜率和换手率等指标，用于衡量模型信号转化为交易收益后的表现。
+\end{enumerate}
+
+需要强调的是，模型层指标与交易层指标不一定完全一致。RankIC 更关注排序能力，但交易收益还受到持仓数量、调仓频率、换手约束、样本极端值和市场状态影响。因此，本报告在选择最终Transformer版本时，不只看单个 best epoch 的 RankIC，也结合统一历史回测下的可执行表现。
+
+Transformer 消融实验共比较了五个主要版本，分别改变窗口长度、特征维度、损失函数和结构增强方式。
+
+
+\begin{table}[H]
+    \centering
+    \small
+    \begin{tabularx}{\textwidth}{lXXXX}
+        \toprule
+        \textbf{模型版本} & \textbf{主要设定} & \textbf{验证集 RankIC} & \textbf{验证集 IC} & \textbf{模型层结论} \\
+        \midrule
+        \modelname{StdTF-l60-cls-mse-f18} & 60 日窗口，CLS 池化，MSE，18 维特征 & 0.0665 & 0.0507 & 验证 RankIC 最高 \\
+        \modelname{EnhancedTF-l60-cls-mse-f13} & 增强结构，60 日窗口，13 维特征 & 0.0617 & 0.0390 & 模型层指标较高 \\
+        \modelname{StdTF-l60-cls-huber-f13} & 60 日窗口，CLS 池化，Huber，13 维特征 & 0.0603 & 0.0408 & Huber 损失版本 \\
+        \modelname{StdTF-l60-cls-mse-f13} & 60 日窗口，CLS 池化，MSE，13 维特征 & 0.0550 & 0.0451 & 最终冻结版本 \\
+        \modelname{StdTF-l20-cls-mse-f13} & 20 日窗口，CLS 池化，MSE，13 维特征 & 0.0362 & 0.0272 & 短 lookback 表现较弱 \\
+        \bottomrule
+    \end{tabularx}
+    \caption{Transformer 家族模型层指标对比（按 best epoch）}
+    \label{tab:tf-model-metric}
+\end{table}
+
+从模型层指标看，\modelname{StdTF-l60-cls-mse-f18} 的 RankIC 为 0.0665、IC 为 0.0507，是验证集 best epoch 下表现最好的版本。这说明 18 维特征确实可能为 Transformer 提供更多横截面排序信息。然而，模型选择不能只依赖 best epoch 的相关性指标，还需要考察信号进入交易策略后的稳定性。
+
+\begin{table}[H]
+    \centering
+    \small
+    \begin{tabular}{lcc}
+        \toprule
+        \textbf{模型版本} & \textbf{5 日调仓累计收益（test, Top20）} & \textbf{Sharpe-like} \\
+        \midrule
+        \modelname{StdTF-l60-cls-mse-f13} & 65.98\% & 1.593 \\
+        \modelname{StdTF-l60-cls-huber-f13} & 36.96\% & 0.837 \\
+        \modelname{StdTF-l60-cls-mse-f18} & 32.49\% & 1.103 \\
+        \modelname{EnhancedTF-l60-cls-mse-f13} & 32.30\% & 0.725 \\
+        \modelname{StdTF-l20-cls-mse-f13} & 28.69\% & 0.748 \\
+        \bottomrule
+    \end{tabular}
+    \caption{Transformer 家族 5 日调仓历史回测对比}
+    \label{tab:tf-backtest}
+\end{table}
+
+从交易层指标看，\modelname{StdTF-l60-cls-mse-f13} 在 test、Top20、5 日调仓口径下累计收益达到 65.98\%，Sharpe-like 为 1.593，显著优于其他 Transformer 版本。因此，虽然 \modelname{StdTF-l60-cls-mse-f18} 的 best epoch RankIC 更高，但它的信号并未在统一回测中转化为更高收益，可能存在特征维度扩大后对验证集局部结构过拟合、持仓集中度提高或收益贡献不稳定的问题。
+
+综合来看，Transformer 组内部消融给出三点结论：
+\begin{enumerate}[label=\arabic*)]
+    \item \textbf{60 日窗口明显优于 20 日窗口}：\modelname{StdTF-l20-cls-mse-f13} 的 RankIC 仅为 0.0362，回测收益也最低，说明过短窗口难以覆盖足够的中期量价结构；
+    \item \textbf{增强结构与 Huber 损失未稳定提升收益}：\modelname{EnhancedTF-l60-cls-mse-f13} 和 \modelname{StdTF-l60-cls-huber-f13} 的 RankIC 尚可，但回测收益不如标准 MSE 版本；
+    \item \textbf{模型层最优不等于交易层最优}：\modelname{StdTF-l60-cls-mse-f18} 的 IC/RankIC 最好，但 \modelname{StdTF-l60-cls-mse-f13} 的 5 日调仓收益和 Sharpe-like 最好，因此最终选择后者作为 Transformer 冻结版本。
+\end{enumerate}
+
+\section{冻结模型实盘策略复盘评测}
+
+本章只使用已经冻结的模型进行实盘策略复盘评测，时间范围为 2026-06-01 至 2026-06-12，共 10 个交易日。目的是复盘模型分数如何转化为交易策略：第一，如果只按模型分数买入 TopK 股票，策略表现如何；第二，在 GRU 分数基础上加入组合优化约束后，交易结果是否改善；第三，训练标签为未来 5 日收益时，交易调仓频率是否也应接近 5 日周期。
+
+\subsection{TopK 简化方案复盘评测}
+
+TopK 简化方案是最朴素的交易规则：每天只看模型给出的预测分，选取得分最高的 K 只股票构造等权组合，不读取人工实盘持仓，也不加入行业、换手、单票权重等组合优化约束。
+\begin{table}[H]
+    \centering
+    \small
+    \setlength{\tabcolsep}{3pt}
+    \begin{tabular}{llccccc}
+        \toprule
+        \textbf{模型} & \textbf{调仓频率} & \textbf{K} & \textbf{累计收益} & \textbf{Sharpe-like} & \textbf{最大回撤} & \textbf{平均换手} \\
+        \midrule
+        \modelname{gru-final} & 五日调仓 & 10 & -7.45\% & -1.634 & -7.20\% & 16.79\% \\
+        \modelname{gru-final} & 五日调仓 & 20 & -4.98\% & -1.528 & -7.78\% & 16.70\% \\
+        \modelname{gru-final} & 五日调仓 & 30 & -3.49\% & -1.301 & -6.51\% & 14.72\% \\
+        \modelname{gru-final} & 每日调仓 & 10 & -15.01\% & -1.981 & -12.24\% & 48.77\% \\
+        \modelname{gru-final} & 每日调仓 & 20 & -11.85\% & -2.483 & -10.48\% & 36.93\% \\
+        \modelname{gru-final} & 每日调仓 & 30 & -11.65\% & -2.682 & -9.57\% & 33.42\% \\
+        \modelname{TF-final} & 五日调仓 & 20 & -3.78\% & -2.068 & -5.46\% & 14.44\% \\
+        \modelname{TF-final} & 每日调仓 & 20 & -4.11\% & -2.294 & -5.39\% & 19.10\% \\
+        \bottomrule
+    \end{tabular}
+    \caption{TopK 简化方案复盘评测结果}
+    \label{tab:live-same-day-topk}
+\end{table}
+
+表 \ref{tab:live-same-day-topk} 显示，简单 TopK 在实盘窗口内整体表现偏弱。GRU 在 K=10、20、30 下累计收益均为负，Transformer 的 Top20 结果也为负，说明只按预测分买入最高分股票，尚不足以形成稳定交易收益。
+
+GRU 中 K 从 10 扩大到 30 后，五日调仓亏损有所收窄，说明分散化有一定帮助；但 TopK 仍缺少权重分配、流动性、换手和风险约束。每日调仓进一步提高换手并扩大亏损，说明问题不在于调仓不够频繁，而在于缺少把模型分数转化为可执行持仓的组合构建规则。因此，下一节引入 live optimizer。
+
+\subsection{GRU live optimizer 组合优化方案复盘评测}
+
+为了进一步优化策略，我们使用 GRU live optimizer 策略：每日读取冻结 GRU 预测分、live features 和真实日频行情，从初始资金开始滚动生成目标持仓。
+
+具体策略如下：
+\begin{enumerate}[label=\arabic*)]
+    \item \textbf{候选股票选择}：以 GRU 每日预测分作为收益吸引项，基础目标持仓数设为 $K=10$，候选池按预测分扩展到约 $5K$，避免只在过窄候选集中求解；
+    \item \textbf{仓位约束}：最低持仓比例设为 80\%，单票权重上限为 10\%，并保留少量现金缓冲；本次复盘中五日调仓口径的平均持仓比例约为 98\%，平均现金比例约为 2\%；
+    \item \textbf{换手约束}：组合每次调仓的目标换手受上限约束，配置中换手上限为 50\%，用于避免模型分数小幅波动导致组合频繁重配；
+    \item \textbf{成交容量约束}：买入金额受到个股成交额约束，参与率上限为 3\%，降低理论组合买入低流动性股票但实盘难以成交的风险；
+    \item \textbf{成本约束}：复盘计入 10bps 交易成本和 5bps 滑点，收益按扣除交易摩擦后的净值变化计算。
+\end{enumerate}
+
+因此，live optimizer 策略下，模型只负责给股票打分，组合优化器负责把分数转化为可执行持仓。
+
+\begin{table}[H]
+    \centering
+    \small
+    \setlength{\tabcolsep}{3pt}
+    \begin{tabular}{llccccc}
+        \toprule
+        \textbf{策略口径} & \textbf{调仓频率} & \textbf{累计收益} & \textbf{超额收益} & \textbf{Sharpe-like} & \textbf{最大回撤} & \textbf{平均成交换手} \\
+        \midrule
+        简单 TopK & 五日调仓 & -7.45\% & -2.31\% & -1.634 & -7.20\% & 16.79\% \\
+        简单 TopK & 每日调仓 & -15.01\% & -9.86\% & -1.981 & -12.24\% & 48.77\% \\
+        live optimizer & 五日调仓 & 1.01\% & 6.15\% & 0.528 & -7.38\% & 13.00\% \\
+        live optimizer & 每日调仓 & -12.19\% & -7.05\% & -2.060 & -11.72\% & 52.57\% \\
+        \bottomrule
+    \end{tabular}
+    \caption{GRU 简单 TopK 与 live optimizer 组合优化方案复盘评测结果对比}
+    \label{tab:gru-live-optimizer}
+\end{table}
+
+表 \ref{tab:gru-live-optimizer} 表明，组合优化对五日调仓口径有明显改善。以 K=10 为参照，简单 TopK 五日调仓累计收益为 -7.45\%，加入 live optimizer 后提升到 1.01\%，相对基准超额达到 6.15\%。这说明在实盘窗口内，GRU 分数直接等权买入时表现较弱，但经过持仓分散、现金缓冲、成交容量和换手控制后，可以转化为更稳定的组合收益。
+
+但是，组合优化并不能自动修复调仓频率错配。每日调仓下，live optimizer 累计收益仍为 -12.19\%，平均成交换手达到 52.57\%。这说明组合优化可以改善“买哪些、买多少、怎么买”的问题，但如果调仓频率与模型标签周期不匹配，过高换手仍会放大噪声和交易摩擦。
+
+\subsection{调仓频率分析}
+
+本项目的训练标签定义为未来 5 日相对收益，因此模型输出更接近“未来一段持有期内哪些股票相对更强”的判断，而不是“明天立刻买卖哪些股票”的高频指令。表 \ref{tab:rebalance-frequency} 汇总了同一实盘窗口下一日调仓与五日调仓的差异。
+
+\begin{table}[H]
+    \centering
+    \small
+    \setlength{\tabcolsep}{4pt}
+    \begin{tabular}{lcccc}
+        \toprule
+        \textbf{策略口径} & \textbf{五日调仓收益} & \textbf{每日调仓收益} & \textbf{收益差} & \textbf{换手变化} \\
+        \midrule
+        GRU TopK, K=10 & -7.45\% & -15.01\% & -7.55pct & +31.98pct \\
+        GRU TopK, K=20 & -4.98\% & -11.85\% & -6.87pct & +20.23pct \\
+        GRU TopK, K=30 & -3.49\% & -11.65\% & -8.15pct & +18.70pct \\
+        GRU live optimizer & 1.01\% & -12.19\% & -13.20pct & +39.57pct \\
+        TF-final Top20 & -3.78\% & -4.11\% & -0.33pct & +4.66pct \\
+        \bottomrule
+    \end{tabular}
+    \caption{实盘窗口内五日调仓与每日调仓的差异}
+    \label{tab:rebalance-frequency}
+\end{table}
+
+表 \ref{tab:rebalance-frequency} 的结论比较一致：在本次 2026-06-01 至 2026-06-12 的实盘窗口中，每日调仓没有改善收益，反而显著提高换手。GRU 的差异尤其明显，说明其预测分更适合作为 5 日持有期内的横截面排序信号，而不是每天完全重置的交易指令。
+
+以上结果说明，预测方案和买卖交易方案对于股票交易都很重要。模型预测分提供的是股票间相对强弱排序；交易方案决定的是多久调一次仓、每只股票买多少、允许多少现金、承受多少换手和交易成本。本次复盘中，组合优化在五日调仓下明显有效，但每日调仓整体削弱收益。这为后续分析实际人工操作结果提供了理论基础。
+
+\section{模拟交易过程、收益记录与一致性复盘}
+
+\subsection{模拟交易基本规则与执行流程}
+本组于 2026 年 6 月 1 日至 6 月 12 日参加同花顺 FDL2026 模拟交易比赛。比赛要求每日尽可能满仓，并在 A 股交易时间内提交委托。由于 A 股存在 T+1 制度，当日买入的股票至少需要到下一交易日才能卖出；同时，提交委托并不等于成交，涨跌停、流动性不足、价格变动和撤单重挂都会导致理论模型推荐与实际成交出现偏差。
+
+本组实操阶段采用 \modelname{gru-final} 作为主力模型。每日执行流程如下：
+\begin{enumerate}[label=\arabic*)]
+    \item 盘后更新最新数据，运行 GRU 推理脚本，得到下一交易日候选股票预测分；
+    \item 按预测分排序生成推荐 Top 名单；
+    \item 根据当前持仓、T+1 可卖状态、满仓约束和可成交情况确定实际卖出与买入名单；
+    \item 在交易时段内完成下单，并记录成交、未成交、撤单和偏离模型推荐的原因；
+    \item 赛后整理收益趋势、调仓记录和持仓截图，用于报告附录与一致性复盘。
+\end{enumerate}
+
+\subsection{模拟交易一致性复盘表}
+\begin{table}[H]
+    \centering
+    \small
+    \setlength{\tabcolsep}{2pt}
+    \caption{2026-06-01 至 2026-06-12 模拟交易一致性复盘表}
+    \label{tab:live-consistency}
+    \begin{tabularx}{\textwidth}{@{}>{\raggedright\arraybackslash}p{0.10\textwidth}YYYY>{\raggedright\arraybackslash}p{0.08\textwidth}Y@{}}
+    \toprule
+    \textbf{日期} & \textbf{推荐 Top 名单} & \textbf{实际买入} & \textbf{实际卖出} & \textbf{收益率} & \textbf{是否一致} & \textbf{偏差原因} \\
+    \midrule
+    2026-06-01 & 待补充 & 待补充 & 无/首日建仓 & 待补充 & 待补充 & 首日建仓，需说明是否完全按模型 Top 买入 \\
+    2026-06-02 & 待补充 & 待补充 & 待补充 & 待补充 & 待补充 & T+1、未成交、涨跌停或人工操作偏差 \\
+    2026-06-03 & 待补充 & 待补充 & 待补充 & 待补充 & 待补充 & 待补充 \\
+    2026-06-04 & 待补充 & 待补充 & 待补充 & 待补充 & 待补充 & 待补充 \\
+    2026-06-05 & 待补充 & 待补充 & 待补充 & 待补充 & 待补充 & 待补充 \\
+    2026-06-08 & 待补充 & 待补充 & 待补充 & 待补充 & 待补充 & 周末后首个交易日，检查数据更新与信号延迟 \\
+    2026-06-09 & 待补充 & 待补充 & 待补充 & 待补充 & 待补充 & 待补充 \\
+    2026-06-10 & 待补充 & 待补充 & 待补充 & 待补充 & 待补充 & 待补充 \\
+    2026-06-11 & 待补充 & 待补充 & 待补充 & 待补充 & 待补充 & 待补充 \\
+    2026-06-12 & 待补充 & 待补充 & 待补充 & 待补充 & 待补充 & 赛末持仓与收益结算 \\
+    \bottomrule
+    \end{tabularx}
+\end{table}
+
+一致性复盘中，“是否一致”不应只按实际买入股票是否完全等于推荐 Top 名单判断，而应结合交易制度进行分层：
+\begin{itemize}
+    \item \textbf{完全一致}：实际买入、卖出和持仓调整基本符合模型推荐及既定策略；
+    \item \textbf{规则导致的不一致}：由于 T+1、涨跌停、停牌、未成交或满仓约束导致无法执行模型推荐；
+    \item \textbf{人工操作导致的不一致}：由于下单时间、价格设置、撤单选择或临时判断造成偏离；
+    \item \textbf{数据流程导致的不一致}：由于当日数据未及时更新、脚本运行错误或信号文件版本不一致造成偏离。
+\end{itemize}
+
+\subsection{模拟交易收益与截图证明}
+\placeholder{收益趋势与截图}{在此处插入同花顺模拟交易的收益趋势截图、历史调仓记录截图和最终持仓记录截图。建议每张图配一句说明：截图对应日期范围、最终收益、最大回撤或关键操作节点。}
+
+\begin{figure}[H]
+    \centering
+    \fbox{\parbox{0.85\textwidth}{\centering 待插入：同花顺收益趋势截图}}
+    \caption{模拟交易收益趋势截图}
+    \label{fig:live-return}
+\end{figure}
+
+\begin{figure}[H]
+    \centering
+    \fbox{\parbox{0.85\textwidth}{\centering 待插入：同花顺调仓记录截图}}
+    \caption{模拟交易调仓记录截图}
+    \label{fig:live-trade-log}
+\end{figure}
+
+\begin{figure}[H]
+    \centering
+    \fbox{\parbox{0.85\textwidth}{\centering 待插入：同花顺持仓记录截图}}
+    \caption{模拟交易最终持仓截图}
+    \label{fig:live-position}
+\end{figure}
+
+\subsection{模拟交易偏差分析}
+\placeholder{实盘收益分析}{补充模拟交易的最终收益率、排名、每日收益变化、最大单日亏损/盈利、主要收益贡献股票和主要亏损股票。}
+
+本节建议围绕以下问题展开：
+\begin{enumerate}[label=\arabic*)]
+    \item \textbf{模型推荐与实际交易的偏差有多大？} 可以统计 10 个交易日中完全一致、规则不一致、人工不一致的天数；
+    \item \textbf{每日调仓是否造成过高换手？} 将实际换手率与理论测试中的每日换手率对比，判断收益损失是否来自频繁调仓；
+    \item \textbf{亏损或收益主要来自模型判断还是执行摩擦？} 若模型推荐股票本身次日表现较差，属于预测问题；若推荐股票表现较好但未买入或未成交，属于执行问题；
+    \item \textbf{短期比赛结果是否能代表模型长期能力？} 两周样本较短，市场噪声较大，应避免用最终排名直接否定或肯定模型。
+\end{enumerate}
+
+\section{实验亮点、问题反思与改进方向}
+
+\subsection{实验亮点}
+本项目的主要亮点可以概括为四点：
+\begin{enumerate}[label=\arabic*)]
+    \item \textbf{完整深度学习量化流水线}：从原始 A 股日频数据出发，完成特征构建、标签生成、序列建模、预测导出、历史回测和模拟交易；
+    \item \textbf{严格关注数据泄露问题}：报告明确区分模型输入特征、交易执行 mask 和事后审计变量，并强调 point-in-time 约束；
+    \item \textbf{采用模型家族内部消融叙述}：GRU 与 Transformer 各自先解释最终版本选择，避免把不同模型、不同特征和不同交易口径混在一起比较；
+    \item \textbf{实盘一致性复盘}：不仅报告最终模拟交易收益，还记录模型推荐、实际买卖和偏差原因，使交易结果具有可解释性。
+\end{enumerate}
+
+\subsection{主要问题与反思}
+\begin{itemize}
+    \item \textbf{模型指标与交易收益不完全一致}：Transformer 消融中，\modelname{StdTF-l60-cls-mse-f18} 的 RankIC 最好，但 5 日调仓收益不如 \modelname{StdTF-l60-cls-mse-f13}，说明模型选择不能只看单一相关性指标；
+    \item \textbf{训练标签周期与实盘执行频率存在错配}：模型学习未来 5 日收益，但比赛期间实际每日评分和调仓，需要通过对照实验解释这种错配；
+    \item \textbf{短期模拟交易受执行影响明显}：T+1、未成交、涨跌停、满仓要求和下单时点都会让理论策略与真实模拟交易产生偏差；
+    \item \textbf{协作工程复杂度较高}：不同成员分别实现数据、模型、回测和实盘脚本时，必须统一数据版本、模型 checkpoint、预测文件格式和评价口径。
+\end{itemize}
+
+\subsection{后续改进方向}
+后续可以从以下方向改进：第一，扩大股票池并引入更稳定的行业中性约束，减少单一板块风格暴露；第二，在损失函数中加入排序目标，使训练目标更贴近 Top 组合选股；第三，系统比较每日、三日、五日等不同调仓周期，选择与标签周期和市场环境更匹配的执行频率；第四，在组合优化中显式加入行业集中度、换手限制、个股权重上限和交易成本，提升实盘可执行性；第五，在模拟交易前建立更严格的自动化检查流程，确保每日实际操作与模型信号一致。
+
+\section{复现说明与提交材料}
+
+\subsection{代码结构与运行说明}
+本项目的代码已经统一整理在 \texttt{Final/} 目录下，整体组织遵循“配置驱动、流水线分层、产物可再生成”的原则。也就是说，仓库提交的是代码、配置、报告和说明文档；原始行情、训练张量、模型权重、预测文件和回测结果均视为本地运行产物，由 README 中的命令重新生成。
+
+\begin{table}[H]
+    \centering
+    \small
+    \begin{tabular}{p{0.24\textwidth}p{0.66\textwidth}}
+        \toprule
+        \textbf{目录或文件} & \textbf{对应流程与职责} \\
+        \midrule
+        \texttt{configs/data/} & 定义原始数据根目录、字段 schema、标签 horizon、purged walk-forward 切分区间和实验日期范围，是历史数据构建的入口配置。\\
+        \texttt{configs/features/} & 保存 clean 特征合同，区分 alpha 特征、风险控制变量、可交易性控制变量和 residual-style 候选特征。\\
+        \texttt{configs/models/} & 保存 GRU 与 Transformer 的训练配置，包括输入张量路径、模型结构、损失函数、batch 方式和早停指标。\\
+        \texttt{configs/backtest/} 与 \texttt{configs/portfolio/} & 定义 T+1 成交仿真、调仓频率、持仓数量、参与率、交易成本和最终组合优化参数。\\
+        \texttt{pipelines/} & 实现数据接入、创业板股票池、证券交易状态、mart 表和 clean 序列样本构建，是从原始日频数据到建模样本的核心逻辑层。\\
+        \texttt{src/data/} & 封装 \texttt{npz} 序列数据集和按交易日组织 batch 的采样器，支持横截面 IC/RankIC 评价和 date-batch 训练。\\
+        \texttt{src/models/} & 实现基础 GRU、feature-style interaction GRU、regime-gated GRU、标准 Transformer 和 enhanced Transformer。\\
+        \texttt{src/training/} & 提供统一训练器、MSE/Huber/IC/TopK 类损失函数和训练期评价指标。\\
+        \texttt{scripts/} & 面向复现的命令行入口，覆盖数据流水线、特征校验、训练、回测、组合优化、审计和 live 流程。\\
+        live 流程封装脚本 & 比赛阶段日度流程封装，按交易日串联数据刷新、live 输入准备、推理、组合优化和订单生成。\\
+        \texttt{README.md} & 面向复现者的主说明文件，按报告流程列出从环境配置到实盘复盘的完整命令。\\
+        \bottomrule
+    \end{tabular}
+    \caption{代码目录与实验流程的对应关系}
+\end{table}
+
+\textbf{历史数据到建模样本。} 数据流程由 \codepath{scripts/run_daily_dag.py} 统一编排。该脚本根据 \codepath{configs/data/data.yaml} 读取本地 \texttt{A股数据/}，依次完成原始数据接入、创业板股票池构建、证券日状态构建、覆盖率校验和 mart 表生成。最终得到的核心表包括：
+\begin{itemize}
+    \item \codepath{data/mart/features_daily/features_daily_v20260526.parquet}
+    \item \codepath{data/mart/labels/labels_v20260526.parquet}
+    \item \codepath{data/mart/labels/execution_labels_v20260526.parquet}
+    \item \codepath{data/mart/datasets/core/dataset_v20260526.parquet}
+\end{itemize}
+这些文件不直接提交，但它们是后续训练、回测和组合优化的统一数据来源。
+
+\textbf{特征与张量构建。} \codepath{configs/features/advanced_sequence_clean_v1.yaml} 是本项目的特征合同。它明确规定哪些字段可以作为模型 alpha 输入，哪些字段只能用于过滤、诊断或交易执行。序列张量由 \codepath{scripts/modeling/build_clean_model_datasets.py} 生成，输出到 \codepath{data/mart/datasets/clean_purged_wf/}。其中 GRU 主线使用 60 日窗口、18 维 \texttt{alpha\_plus\_residual\_style} 张量；Transformer 冻结版本使用 60 日窗口、13 维 \texttt{alpha\_only} 张量。每个张量同时带有 sidecar、manifest 和 filter log，便于追踪样本切分、特征列表和过滤原因。
+
+\textbf{模型训练。} 训练入口统一为 \codepath{scripts/modeling/train_sequence.py}。脚本读取 \codepath{configs/models/} 下的 YAML 配置，并根据 \texttt{model.name} 实例化对应模型。GRU 主线配置为 \codepath{feature_style_interaction_gru_l60_clean_alpha_resid_style_topk10_wide30_clean.yaml}，Transformer 冻结配置为 \codepath{StdTF-l60-cls-mse-f13.yaml}。训练产物写入 \codepath{outputs/runs/<run_name>/}，包括实际使用的配置、训练指标、最佳权重和验证/测试集预测分。报告中的 GRU 主力模型使用 \texttt{checkpoint\_score} 选择的 epoch 12。
+
+\textbf{历史回测与组合优化。} 模型训练后，\codepath{predictions.parquet} 会进入交易层评估。GRU 主线先通过 \codepath{scripts/backtest/run_clean_resid_mainline.py} 进行 T+1 成交仿真，再通过 \codepath{scripts/portfolio/run_final_mainline_optimizer.py} 评估冻结组合优化方案。Transformer 消融通过两个 PowerShell 封装脚本分别复现 5 日调仓和每日调仓结果：
+\begin{itemize}
+    \item \codepath{scripts/backtest/run_transformer_t1_5d_backtests.ps1}
+    \item \codepath{scripts/backtest/run_transformer_daily_rebalance_backtests.ps1}
+\end{itemize}
+回测和优化输出统一保存在 \codepath{outputs/backtest/} 下。
+
+\textbf{模拟交易流程。} live 部分对应 2026-06-01 至 2026-06-12 的同花顺模拟交易窗口。根目录 \codepath{run_live_trading_pipeline.ps1} 按交易日串联 live 输入准备、推理、组合优化和订单生成四个阶段；必要时再进入人工成交记录和收盘估值。live 输入位于 \codepath{data/live/}，输出主要位于：
+\begin{itemize}
+    \item \codepath{outputs/live_predictions/}
+    \item \codepath{outputs/live_targets/}
+    \item \codepath{outputs/live_orders/}
+    \item \codepath{outputs/live/valuations/}
+\end{itemize}
+
+\textbf{复现入口与提交边界。} 完整命令以根目录 \codepath{README.md} 为准。建议复现者按 README 顺序执行：环境配置、原始数据放置、历史数据 DAG、特征校验、张量构建、GRU/Transformer 训练、历史回测、组合优化、live 流程和审计分析。正式提交时保留代码、配置和报告；不提交原始行情、\codepath{data/lake/}、\codepath{data/mart/}、\codepath{data/live/}、\codepath{outputs/}、\codepath{*.pt}、\codepath{*.parquet} 和 \codepath{*.npz} 等可再生成文件。
+
+\subsection{提交材料清单}
+最终提交压缩包应包含实验报告、全部代码文件、\texttt{requirements.txt} 和 \texttt{README.md}。数据和模型权重文件不随代码提交，但需要在报告中说明所使用的数据版本、生成流程和模型 checkpoint 的训练方式。
+
+\section*{团队成员分工说明}
+\addcontentsline{toc}{section}{团队成员分工说明}
+\begin{itemize}
+    \item \textbf{赵国华 PB24061302}：负责数据获取、清洗、特征工程代码编写及防数据泄露审查；
+    \item \textbf{杨曦然 PB23010400}：负责 GRU 与 Transformer 模型架构搭建、训练过程调试与模型消融实验；
+    \item \textbf{欧想想 PB24000206}：负责策略回测框架、评价指标整理、同花顺每日模拟交易执行及报告整合。
+\end{itemize}
+
+\section*{个人感悟}
+\addcontentsline{toc}{section}{个人感悟}
+\textbf{赵国华：} \placeholder{赵国华个人感悟}{补充对数据处理、特征工程和防止数据泄露的理解。}
+
+\textbf{杨曦然：} \placeholder{杨曦然个人感悟}{补充对模型设计、训练调参和消融实验的理解。}
+
+\textbf{欧想想：} \placeholder{欧想想个人感悟}{补充对回测、实盘执行、团队协作和报告整合的理解。}
+
+\nocite{vaswani2017,cho2014}
+\printbibliography
+
+\end{document}
