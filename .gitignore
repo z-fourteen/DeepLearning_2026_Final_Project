@@ -47,9 +47,7 @@ dist/
 worklog/
 
 # Generated data artifacts
-data/**
-!data/
-!data/**/
+data/
 !data/**/.gitkeep
 legacy/legacy_full62_v1/data_manifests/datasets/**/*.npz
 legacy/legacy_full62_v1/data_manifests/datasets/**/*.parquet
@@ -59,8 +57,7 @@ meta/file_registry.parquet
 meta/data_versions.parquet
 meta/pool_registry.parquet
 logs/audit/*.json
-outputs/**
-!outputs/
+outputs/
 !outputs/.gitkeep
 
 # AI-generated session notes
